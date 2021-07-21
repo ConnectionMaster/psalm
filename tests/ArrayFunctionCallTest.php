@@ -157,12 +157,36 @@ class ArrayFunctionCallTest extends TestCase
                 '<?php
                     $c = array_combine(["a", "b", "c"], [1, 2, 3]);',
                 'assertions' => [
-                    '$c' => 'array<string, int>|false',
+                    '$c' => 'false|non-empty-array<string, int>',
                 ],
+                'error_levels' => [],
+                '7.4',
             ],
-            'arrayCombineFalse' => [
+            'arrayCombinePHP8' => [
                 '<?php
                     $c = array_combine(["a", "b"], [1, 2, 3]);',
+                'assertions' => [
+                    '$c' => 'non-empty-array<string, int>',
+                ],
+                'error_levels' => [],
+                '8.0',
+            ],
+            'arrayCombineNotMatching' => [
+                '<?php
+                    $c = array_combine(["a", "b"], [1, 2, 3]);',
+                'assertions' => [
+                    '$c' => 'false|non-empty-array<string, int>',
+                ],
+                'error_levels' => [],
+                '7.4',
+            ],
+            'arrayCombineDynamicParams' => [
+                '<?php
+                    /** @return array<string> */
+                    function getStrings(): array{ return []; }
+                    /** @return array<int> */
+                    function getInts(): array{ return []; }
+                    $c = array_combine(getStrings(), getInts());',
                 'assertions' => [
                     '$c' => 'array<string, int>|false',
                 ],
@@ -688,7 +712,7 @@ class ArrayFunctionCallTest extends TestCase
                         ARRAY_FILTER_USE_KEY
                     );',
                 'assertions' => [
-                    '$foo' => 'array<string, pure-Closure():string(baz)>',
+                    '$foo' => 'array<string, pure-Closure():"baz">',
                 ],
             ],
             'ignoreFalsableCurrent' => [
@@ -885,17 +909,23 @@ class ArrayFunctionCallTest extends TestCase
                         return "a";
                     }',
             ],
+            'arrayFillZeroLength' => [
+                '<?php
+                    count(array_fill(0, 0, 0)) === 0;',
+            ],
             'implodeMultiDimensionalArray' => [
                 '<?php
                     $urls = array_map("implode", [["a", "b"]]);',
             ],
             'implodeNonEmptyArrayAndString' => [
                 '<?php
-                    /** @var non-empty-array<non-empty-string> */
                     $l = ["a", "b"];
-                    $a = implode(":", $l);',
+                    $k = [1, 2, 3];
+                    $a = implode(":", $l);
+                    $b = implode(":", $k);',
                 [
-                    '$a===' => 'non-empty-string',
+                    '$a===' => 'non-empty-literal-string',
+                    '$b===' => 'non-empty-literal-string',
                 ]
             ],
             'key' => [
@@ -1295,6 +1325,28 @@ class ArrayFunctionCallTest extends TestCase
                     '$function_call_result' => 'int',
                 ],
             ],
+            'arrayReduceStaticMethods' => [
+                '<?php
+                    $arr = [2, 3, 4, 5];
+
+                    class C {
+                        public static function multiply (int $carry, int $item) : int {
+                            return $carry * $item;
+                        }
+
+                        public static function multiplySelf(array $arr): int {
+                            return array_reduce($arr, [self::class, "multiply"], 1);
+                        }
+
+                        public static function multiplyStatic(array $arr): int {
+                            return array_reduce($arr, [static::class, "multiply"], 1);
+                        }
+                    }
+
+                    $self_call_result = C::multiplySelf($arr);
+                    $static_call_result = C::multiplyStatic($arr);',
+                'assertions' => [],
+            ],
             'arrayReduceMixedReturn' => [
                 '<?php
                     $arr = [2, 3, 4, 5];
@@ -1326,7 +1378,7 @@ class ArrayFunctionCallTest extends TestCase
                     $d = [1, 2, 3];
                     $e = array_splice($d, -1, 1);',
                 'assertions' => [
-                    '$e' => 'array<array-key, mixed>'
+                    '$e' => 'list<int>'
                 ],
             ],
             'arraySpliceOtherType' => [
@@ -1393,7 +1445,7 @@ class ArrayFunctionCallTest extends TestCase
                     function Foo(DateTime ...$dateTimes) : array {
                         return array_map(
                             function ($dateTime) {
-                                return (string) ($dateTime->format("c"));
+                                return ($dateTime->format("c"));
                             },
                             $dateTimes
                         );
@@ -1404,13 +1456,13 @@ class ArrayFunctionCallTest extends TestCase
                     /** @return array<string> */
                     function Foo(DateTime ...$dateTimes) : array {
                         return array_map(
-                            fn ($dateTime) => (string) ($dateTime->format("c")),
+                            fn ($dateTime) => ($dateTime->format("c")),
                             $dateTimes
                         );
                     }',
                 'assertions' => [],
                 'error_levels' => [],
-                '7.4',
+                'php_version' => '7.4',
             ],
             'arrayPad' => [
                 '<?php
@@ -1737,22 +1789,6 @@ class ArrayFunctionCallTest extends TestCase
                 'error_levels' => [],
                 '7.4',
             ],
-            'allowUnpackWithArrayKey' => [
-                '<?php
-                    class Foo {
-                        protected function one(): array {
-                            return [];
-                        }
-
-                        protected function two(): array {
-                            return [];
-                        }
-
-                        public function three(): array {
-                            return [...$this->one(), ...$this->two()];
-                        }
-                    }'
-            ],
             'spliceTurnsintKeyedInputToList' => [
                 '<?php
                     /**
@@ -1869,11 +1905,56 @@ class ArrayFunctionCallTest extends TestCase
                         array_multisort($formLayoutFields, SORT_ASC, array_column($foos, "y"));
                     }'
             ],
+            'arrayMapGenericObject' => [
+                '<?php
+                    /**
+                     * @template T
+                     */
+                    interface Container
+                    {
+                        /**
+                         * @return T
+                         */
+                        public function get(string $name);
+                    }
+
+                    /**
+                     * @param Container<stdClass> $container
+                     * @param array<string> $data
+                     * @return array<stdClass>
+                     */
+                    function bar(Container $container, array $data): array {
+                        return array_map(
+                            [$container, "get"],
+                            $data
+                        );
+                    }'
+            ],
+            'arrayMapShapeAndGenericArray' => [
+                '<?php
+                    /** @return string[] */
+                    function getLine(): array { return ["a", "b"]; }
+
+                    $line = getLine();
+
+                    if (empty($line[0])) { // converts array<string> to array{0:string}<string>
+                        throw new InvalidArgumentException;
+                    }
+
+                    $line = array_map( // should not destroy <string> part
+                        function($val) { return (int)$val; },
+                        $line
+                    );
+                ',
+                'assertions' => [
+                    '$line===' => 'array{0: int}<array-key, int>',
+                ],
+            ],
         ];
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {
@@ -1919,6 +2000,11 @@ class ArrayFunctionCallTest extends TestCase
 
                     array_filter(["hello"], "foo");',
                 'error_message' => 'InvalidScalarArgument',
+            ],
+            'arrayFillPositiveConstantLength' => [
+                '<?php
+                    count(array_fill(0, 1, 0)) === 0;',
+                'error_message' => 'TypeDoesNotContainType'
             ],
             'arrayFilterTooFewArgs' => [
                 '<?php
@@ -2055,9 +2141,9 @@ class ArrayFunctionCallTest extends TestCase
                     $list = [3, 2, 5, 9];
                     usort($list, fn(int $a, string $b): int => (int) ($a > $b));',
                 'error_message' => 'InvalidScalarArgument',
-                2 => [],
-                3 => false,
-                4 => '7.4',
+                [],
+                false,
+                '7.4',
             ],
             'usortInvalidComparison' => [
                 '<?php

@@ -1,11 +1,12 @@
 <?php
 namespace Psalm\Internal\Type;
 
+use Psalm\Exception\TypeParseTreeException;
+
 use function array_pop;
 use function count;
 use function in_array;
 use function preg_match;
-use Psalm\Exception\TypeParseTreeException;
 use function strlen;
 use function strtolower;
 
@@ -764,7 +765,7 @@ class ParseTreeCreator
                     );
                 } else {
                     throw new TypeParseTreeException(
-                        'Bracket must be preceded by “Closure”, “callable”, "pure-callable" or a valid @method name'
+                        'Paranthesis must be preceded by “Closure”, “callable”, "pure-callable" or a valid @method name'
                     );
                 }
 

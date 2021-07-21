@@ -436,6 +436,17 @@ class ArrayAssignmentTest extends TestCase
                     '$foo' => 'array{a: int, b: array{int, int}}',
                 ],
             ],
+            'objectLikeArrayIsNonEmpty' => [
+                '<?php
+                    /**
+                     * @param array{a?: string, b: string} $arg
+                     * @return non-empty-array<string, string>
+                     */
+                    function test(array $arg): array {
+                        return $arg;
+                    }
+                ',
+            ],
             'nestedTKeyedArrayAddition' => [
                 '<?php
                     $foo = [];
@@ -811,6 +822,7 @@ class ArrayAssignmentTest extends TestCase
                          * @psalm-suppress InvalidArrayOffset
                          * @psalm-suppress MixedOperand
                          * @psalm-suppress PossiblyUndefinedArrayOffset
+                         * @psalm-suppress MixedAssignment
                          */
                         $a["b"]["d"] += $a["b"][$i];
                     }',
@@ -860,6 +872,13 @@ class ArrayAssignmentTest extends TestCase
                     $f[0] = "hello";',
                 'assertions' => [
                     '$f' => 'array{0: string}',
+                ],
+            ],
+            'dontIncrementIntOffsetForKeyedItems' => [
+                '<?php
+                    $a = [1, "a" => 2, 3];',
+                'assertions' => [
+                    '$a' => 'array{0: int, 1: int, a: int}',
                 ],
             ],
             'assignArrayOrSetNull' => [
@@ -1028,20 +1047,6 @@ class ArrayAssignmentTest extends TestCase
                     $c = new C();
                     $c[] = "hello";',
             ],
-            'addToMixedArray' => [
-                '<?php
-                    /**
-                     * @param array{key: string} $a
-                     */
-                    function foo(array $a): void {
-                        echo $a["key"];
-                    }
-
-                    function bar(array $arr) : void {
-                        $arr["key"] = "qqq";
-                        foo($arr);
-                    }'
-            ],
             'checkEmptinessAfterConditionalArrayAdjustment' => [
                 '<?php
                     class A {
@@ -1200,6 +1205,7 @@ class ArrayAssignmentTest extends TestCase
                          */
                         private $ints = [];
 
+                        /** @no-named-arguments */
                         public function set(int ...$ints): void {
                             $this->ints = $ints;
                         }
@@ -1484,6 +1490,38 @@ class ArrayAssignmentTest extends TestCase
                     return [...$data];
                 }'
             ],
+            'unpackCanBeEmpty' => [
+                '<?php
+                    $x = [];
+                    $y = [];
+
+                    $x = [...$x, ...$y];
+
+                    $x ? 1 : 0;
+                ',
+            ],
+            'unpackEmptyKeepsCorrectKeys' => [
+                '<?php
+                    $a = [];
+                    $b = [1];
+                    $c = [];
+                    $d = [2];
+
+                    $e = [...$a, ...$b, ...$c, ...$d, 3];
+                ',
+                'assertions' => ['$e' => 'array{int, int, int}']
+            ],
+            'unpackNonObjectlikePreventsObjectlikeArray' => [
+                '<?php
+                    /** @return list<mixed> */
+                    function test(): array {
+                        return [];
+                    }
+
+                    $x = [...test(), "a" => "b"];
+                ',
+                'assertions' => ['$x' => 'non-empty-array<int|string, mixed>']
+            ],
             'ArrayOffsetNumericSupPHPINTMAX' => [
                 '<?php
                     $_a = [
@@ -1516,11 +1554,67 @@ class ArrayAssignmentTest extends TestCase
                     [$key => 123];
                 }',
             ],
+            'assignStringIndexed' => [
+                '<?php
+                    /**
+                     * @param array<string, mixed> $array
+                     * @return non-empty-array<string, mixed>
+                     */
+                    function getArray(array $array): array {
+                        if (rand(0, 1)) {
+                            $array["a"] = 2;
+                        } else {
+                            $array["b"] = 1;
+                        }
+                        return $array;
+                    }'
+            ],
+            'castPossiblyArray'  => [
+                '<?php
+                    /**
+                     * @psalm-param string|list<string> $a
+                     * @return list<string>
+                     */
+                    function addHeaders($a): array {
+                        return (array)$a;
+                    }',
+            ],
+            'ClassConstantAsKey'  => [
+                '<?php
+                    /**
+                     * @property Foo::C_* $aprop
+                     */
+                    class Foo {
+                        public const C_ONE = 1;
+                        public const C_TWO = 2;
+
+                        public function __get(string $prop) {
+                            if ($prop === "aprop")
+                                return self::C_ONE;
+                            throw new \RuntimeException("Unsupported property: $prop");
+                        }
+
+                        /** @return array<Foo::C_*, string> */
+                        public static function getNames(): array {
+                            return [
+                                self::C_ONE => "One",
+                                self::C_TWO => "Two",
+                            ];
+                        }
+
+                        public function getThisName(): string {
+                            $names = self::getNames();
+                            $aprop = $this->aprop;
+
+                            return $names[$aprop];
+                        }
+                    }',
+            ],
         ];
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {
@@ -1793,6 +1887,19 @@ class ArrayAssignmentTest extends TestCase
                 }',
                 'error_message' => 'DuplicateArrayKey'
             ],
+            'unpackArrayWithArrayKeyIntoArray' => [
+                '<?php
+
+                /**
+                 * @param array<array-key, mixed> $data
+                 * @return list<mixed>
+                 */
+                function unpackArray(array $data): array
+                {
+                    return [...$data];
+                }',
+                'error_message' => 'DuplicateArrayKey',
+            ],
             'ArrayCreateOffsetObject' => [
                 '<?php
                     $_a = [new stdClass => "a"];
@@ -1913,6 +2020,22 @@ class ArrayAssignmentTest extends TestCase
                         echo $array[0];
                         return $array;
                     }',
+                'error_message' => 'InvalidArrayOffset'
+            ],
+            'TemplateAsKey' => [
+                '<?php
+
+                class Foo {
+
+                    /**
+                     * @psalm-template T of array
+                     * @param T $offset
+                     * @param array<array, string> $weird_array
+                     */
+                    public function getThisName($offset, $weird_array): string {
+                        return $weird_array[$offset];
+                    }
+                }',
                 'error_message' => 'InvalidArrayOffset'
             ],
         ];

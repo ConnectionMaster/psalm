@@ -1,10 +1,11 @@
 <?php
 namespace Psalm\Internal\Diff;
 
+use PhpParser;
+
 use function array_merge;
 use function end;
 use function get_class;
-use PhpParser;
 use function substr;
 
 /**
@@ -21,7 +22,8 @@ class NamespaceStatementsDiffer extends AstDiffer
      *      0: list<string>,
      *      1: list<string>,
      *      2: list<string>,
-     *      3: list<array{0: int, 1: int, 2: int, 3: int}>
+     *      3: list<array{int, int, int, int}>,
+     *      4: list<array{int, int}>
      * }
      */
     public static function diff(string $name, array $a, array $b, string $a_code, string $b_code): array
@@ -86,6 +88,7 @@ class NamespaceStatementsDiffer extends AstDiffer
         $keep_signature = [];
         $add_or_delete = [];
         $diff_map = [];
+        $deletion_ranges = [];
 
         foreach ($diff as $diff_elem) {
             if ($diff_elem->type === DiffElem::TYPE_KEEP) {
@@ -108,6 +111,7 @@ class NamespaceStatementsDiffer extends AstDiffer
                     $keep_signature = array_merge($keep_signature, $class_keep[1]);
                     $add_or_delete = array_merge($add_or_delete, $class_keep[2]);
                     $diff_map = array_merge($diff_map, $class_keep[3]);
+                    $deletion_ranges = array_merge($deletion_ranges, $class_keep[4]);
                 }
             } elseif ($diff_elem->type === DiffElem::TYPE_REMOVE) {
                 if ($diff_elem->old instanceof PhpParser\Node\Stmt\Use_
@@ -140,6 +144,6 @@ class NamespaceStatementsDiffer extends AstDiffer
             }
         }
 
-        return [$keep, $keep_signature, $add_or_delete, $diff_map];
+        return [$keep, $keep_signature, $add_or_delete, $diff_map, $deletion_ranges];
     }
 }

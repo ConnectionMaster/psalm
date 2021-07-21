@@ -1,18 +1,20 @@
 <?php
 namespace Psalm\Tests\Traits;
 
-use function is_int;
-use const PHP_VERSION;
-use function preg_quote;
 use Psalm\Config;
 use Psalm\Context;
+
+use function is_int;
+use function preg_quote;
 use function strpos;
 use function version_compare;
+
+use const PHP_VERSION;
 
 trait InvalidCodeAnalysisTestTrait
 {
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     abstract public function providerInvalidCodeParse(): iterable;
 

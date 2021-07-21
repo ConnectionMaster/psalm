@@ -1,22 +1,23 @@
 <?php
 namespace Psalm;
 
+use Psalm\Internal\Analyzer\StatementsAnalyzer;
+use Psalm\Internal\Clause;
+use Psalm\Internal\Type\AssertionReconciler;
+use Psalm\Storage\FunctionLikeStorage;
+use Psalm\Type\Union;
+
 use function array_keys;
+use function array_search;
 use function count;
 use function in_array;
+use function is_int;
 use function json_encode;
 use function preg_match;
 use function preg_quote;
 use function preg_replace;
-use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Internal\Clause;
-use Psalm\Storage\FunctionLikeStorage;
-use Psalm\Internal\Type\AssertionReconciler;
-use Psalm\Type\Union;
 use function strpos;
 use function strtolower;
-use function array_search;
-use function is_int;
 
 class Context
 {
@@ -38,13 +39,6 @@ class Context
      * @var bool
      */
     public $inside_conditional = false;
-
-    /**
-     * Whether or not we're inside a __construct function
-     *
-     * @var bool
-     */
-    public $inside_constructor = false;
 
     /**
      * Whether or not we're inside an isset call
@@ -83,7 +77,14 @@ class Context
      *
      * @var bool
      */
-    public $inside_use = false;
+    public $inside_general_use = false;
+
+    /**
+     * Whether or not we're inside a return expression
+     *
+     * @var bool
+     */
+    public $inside_return = false;
 
     /**
      * Whether or not we're inside a throw
@@ -142,7 +143,7 @@ class Context
     /**
      * A list of classes checked with class_exists
      *
-     * @var array<lowercase-string,bool>
+     * @var array<lowercase-string,true>
      */
     public $phantom_classes = [];
 
@@ -365,6 +366,11 @@ class Context
      * @var bool
      */
     public $has_returned = false;
+
+    /**
+     * @var array<string, bool>
+     */
+    public $vars_from_global = [];
 
     public function __construct(?string $self = null)
     {
@@ -674,13 +680,14 @@ class Context
         }
     }
 
-    public function removeMutableObjectVars(): void
+    public function removeMutableObjectVars(bool $methods_only = false): void
     {
         $vars_to_remove = [];
 
         foreach ($this->vars_in_scope as $var_id => $type) {
             if ($type->has_mutations
                 && (strpos($var_id, '->') !== false || strpos($var_id, '::') !== false)
+                && (!$methods_only || strpos($var_id, '()'))
             ) {
                 $vars_to_remove[] = $var_id;
             }
@@ -700,7 +707,9 @@ class Context
             $abandon_clause = false;
 
             foreach (array_keys($clause->possibilities) as $key) {
-                if (strpos($key, '->') !== false || strpos($key, '::') !== false) {
+                if ((strpos($key, '->') !== false || strpos($key, '::') !== false)
+                    && (!$methods_only || strpos($key, '()'))
+                ) {
                     $abandon_clause = true;
                     break;
                 }
@@ -712,6 +721,10 @@ class Context
         }
 
         $this->clauses = $clauses_to_keep;
+
+        if ($this->parent_context) {
+            $this->parent_context->removeMutableObjectVars($methods_only);
+        }
     }
 
     public function updateChecks(Context $op_context): void
@@ -822,5 +835,16 @@ class Context
         foreach ($function_storage->throws as $possibly_thrown_exception => $_) {
             $this->possibly_thrown_exceptions[$possibly_thrown_exception][$hash] = $codelocation;
         }
+    }
+
+    public function insideUse(): bool
+    {
+        return $this->inside_assignment
+            || $this->inside_return
+            || $this->inside_call
+            || $this->inside_general_use
+            || $this->inside_conditional
+            || $this->inside_throw
+            || $this->inside_isset;
     }
 }

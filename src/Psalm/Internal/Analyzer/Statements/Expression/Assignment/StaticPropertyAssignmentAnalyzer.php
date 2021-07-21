@@ -2,15 +2,15 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression\Assignment;
 
 use PhpParser;
-use Psalm\Internal\Analyzer\ClassAnalyzer;
-use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
-use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\ExpressionIdentifier;
-use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Internal\Type\Comparator\UnionTypeComparator;
-use Psalm\Internal\FileManipulation\FileManipulationBuffer;
 use Psalm\CodeLocation;
 use Psalm\Context;
+use Psalm\Internal\Analyzer\ClassAnalyzer;
+use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\ExpressionIdentifier;
+use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
+use Psalm\Internal\Analyzer\StatementsAnalyzer;
+use Psalm\Internal\FileManipulation\FileManipulationBuffer;
+use Psalm\Internal\Type\Comparator\UnionTypeComparator;
 use Psalm\Issue\ImplicitToStringCast;
 use Psalm\Issue\InvalidPropertyAssignmentValue;
 use Psalm\Issue\MixedPropertyTypeCoercion;
@@ -19,8 +19,9 @@ use Psalm\Issue\PropertyTypeCoercion;
 use Psalm\Issue\UndefinedPropertyAssignment;
 use Psalm\IssueBuffer;
 use Psalm\Type;
-use function strtolower;
+
 use function explode;
+use function strtolower;
 
 /**
  * @internal
@@ -69,15 +70,15 @@ class StaticPropertyAssignmentAnalyzer
             $fq_class_name = $lhs_atomic_type->value;
 
             if (!$prop_name instanceof PhpParser\Node\Identifier) {
-                $was_inside_use = $context->inside_use;
+                $was_inside_general_use = $context->inside_general_use;
 
-                $context->inside_use = true;
+                $context->inside_general_use = true;
 
                 if (ExpressionAnalyzer::analyze($statements_analyzer, $prop_name, $context) === false) {
                     return false;
                 }
 
-                $context->inside_use = $was_inside_use;
+                $context->inside_general_use = $was_inside_general_use;
 
                 if (!$context->ignore_variable_property) {
                     $codebase->analyzer->addMixedMemberName(
@@ -90,6 +91,23 @@ class StaticPropertyAssignmentAnalyzer
             }
 
             $property_id = $fq_class_name . '::$' . $prop_name;
+
+            if ($codebase->store_node_types
+                && !$context->collect_initializations
+                && !$context->collect_mutations
+            ) {
+                $codebase->analyzer->addNodeReference(
+                    $statements_analyzer->getFilePath(),
+                    $stmt->class,
+                    $fq_class_name
+                );
+
+                $codebase->analyzer->addNodeReference(
+                    $statements_analyzer->getFilePath(),
+                    $stmt->name,
+                    $property_id
+                );
+            }
 
             if (!$codebase->properties->propertyExists($property_id, false, $statements_analyzer, $context)) {
                 if (IssueBuffer::accepts(
@@ -140,7 +158,7 @@ class StaticPropertyAssignmentAnalyzer
 
                             $file_manipulations = [];
 
-                            if (strtolower($new_fq_class_name) !== strtolower($old_declaring_fq_class_name)) {
+                            if (strtolower($new_fq_class_name) !== $old_declaring_fq_class_name) {
                                 $file_manipulations[] = new \Psalm\FileManipulation(
                                     (int) $stmt->class->getAttribute('startFilePos'),
                                     (int) $stmt->class->getAttribute('endFilePos') + 1,

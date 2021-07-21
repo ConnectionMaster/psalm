@@ -1,31 +1,27 @@
 <?php
 namespace Psalm\Internal\Type;
 
-use function array_filter;
-use function explode;
-use function get_class;
-use Psalm\Codebase;
 use Psalm\CodeLocation;
+use Psalm\Codebase;
 use Psalm\Internal\Type\Comparator\UnionTypeComparator;
 use Psalm\Issue\ParadoxicalCondition;
 use Psalm\Issue\RedundantCondition;
 use Psalm\IssueBuffer;
 use Psalm\Type;
 use Psalm\Type\Atomic;
-use Psalm\Type\Union;
-use Psalm\Type\Atomic\TKeyedArray;
 use Psalm\Type\Atomic\Scalar;
 use Psalm\Type\Atomic\TArray;
 use Psalm\Type\Atomic\TArrayKey;
 use Psalm\Type\Atomic\TBool;
 use Psalm\Type\Atomic\TCallable;
 use Psalm\Type\Atomic\TCallableArray;
-use Psalm\Type\Atomic\TCallableList;
 use Psalm\Type\Atomic\TCallableKeyedArray;
+use Psalm\Type\Atomic\TCallableList;
 use Psalm\Type\Atomic\TClassString;
 use Psalm\Type\Atomic\TEmpty;
 use Psalm\Type\Atomic\TFalse;
 use Psalm\Type\Atomic\TInt;
+use Psalm\Type\Atomic\TKeyedArray;
 use Psalm\Type\Atomic\TList;
 use Psalm\Type\Atomic\TMixed;
 use Psalm\Type\Atomic\TNamedObject;
@@ -38,9 +34,14 @@ use Psalm\Type\Atomic\TResource;
 use Psalm\Type\Atomic\TScalar;
 use Psalm\Type\Atomic\TString;
 use Psalm\Type\Atomic\TTemplateParam;
+use Psalm\Type\Union;
+
+use function array_filter;
+use function count;
+use function explode;
+use function get_class;
 use function strpos;
 use function substr;
-use function count;
 
 class SimpleAssertionReconciler extends \Psalm\Type\Reconciler
 {
@@ -458,6 +459,7 @@ class SimpleAssertionReconciler extends \Psalm\Type\Reconciler
         }
 
         $existing_var_type->from_property = false;
+        $existing_var_type->from_static_property = false;
         $existing_var_type->possibly_undefined = false;
         $existing_var_type->possibly_undefined_from_try = false;
         $existing_var_type->ignore_isset = false;
@@ -807,7 +809,7 @@ class SimpleAssertionReconciler extends \Psalm\Type\Reconciler
                 $string_types[] = new TString;
                 $did_remove_type = true;
             } elseif ($type instanceof TTemplateParam) {
-                if ($type->as->hasString() || $type->as->hasMixed()) {
+                if ($type->as->hasString() || $type->as->hasMixed() || $type->as->hasScalar()) {
                     $type = clone $type;
 
                     $type->as = self::reconcileString(
@@ -1658,7 +1660,7 @@ class SimpleAssertionReconciler extends \Psalm\Type\Reconciler
 
                 $did_remove_type = true;
             } elseif ($type instanceof TTemplateParam) {
-                if ($type->as->hasArray() || $type->as->hasMixed()) {
+                if ($type->as->hasArray() || $type->as->hasIterable() || $type->as->hasMixed()) {
                     $type = clone $type;
 
                     $type->as = self::reconcileArray(
@@ -1971,6 +1973,7 @@ class SimpleAssertionReconciler extends \Psalm\Type\Reconciler
                 $callable_types[] = $type;
             } elseif (get_class($type) === TString::class
                 || get_class($type) === Type\Atomic\TNonEmptyString::class
+                || get_class($type) === Type\Atomic\TNonFalsyString::class
             ) {
                 $callable_types[] = new Type\Atomic\TCallableString();
                 $did_remove_type = true;
@@ -1995,12 +1998,24 @@ class SimpleAssertionReconciler extends \Psalm\Type\Reconciler
                 $callable_types[] = $type;
                 $did_remove_type = true;
             } elseif ($type instanceof TTemplateParam) {
-                if ($type->as->isMixed()) {
+                if ($type->as->hasCallableType() || $type->as->hasMixed()) {
                     $type = clone $type;
-                    $type->as = new Type\Union([new Type\Atomic\TCallable]);
+
+                    $type->as = self::reconcileCallable(
+                        $codebase,
+                        $type->as,
+                        null,
+                        $negated,
+                        null,
+                        $suppressed_issues,
+                        $failed_reconciliation,
+                        $is_equality
+                    );
                 }
-                $callable_types[] = $type;
+
                 $did_remove_type = true;
+
+                $callable_types[] = $type;
             } else {
                 $did_remove_type = true;
             }
@@ -2190,6 +2205,8 @@ class SimpleAssertionReconciler extends \Psalm\Type\Reconciler
 
                     if (!$existing_var_atomic_types['string'] instanceof Type\Atomic\TNonEmptyString) {
                         $existing_var_type->addType(new Type\Atomic\TLiteralString(''));
+                        $existing_var_type->addType(new Type\Atomic\TLiteralString('0'));
+                    } elseif (!$existing_var_atomic_types['string'] instanceof Type\Atomic\TNonFalsyString) {
                         $existing_var_type->addType(new Type\Atomic\TLiteralString('0'));
                     }
                 }

@@ -7,8 +7,9 @@ use Psalm\Plugin\EventHandler\PropertyTypeProviderInterface;
 use Psalm\Plugin\Hook\PropertyTypeProviderInterface as LegacyPropertyTypeProviderInterface;
 use Psalm\StatementsSource;
 use Psalm\Type;
-use function strtolower;
+
 use function is_subclass_of;
+use function strtolower;
 
 class PropertyTypeProvider
 {
@@ -95,19 +96,9 @@ class PropertyTypeProvider
         ?StatementsSource $source = null,
         ?Context $context = null
     ): ?Type\Union {
-        foreach (self::$handlers[strtolower($fq_classlike_name)] ?? [] as $property_handler) {
-            $event = new PropertyTypeProviderEvent(
-                $fq_classlike_name,
-                $property_name,
-                $read_mode,
-                $source,
-                $context
-            );
-            $property_type = $property_handler($event);
 
-            if ($property_type !== null) {
-                return $property_type;
-            }
+        if ($source) {
+            $source->addSuppressedIssues(['NonInvariantDocblockPropertyType']);
         }
 
         foreach (self::$legacy_handlers[strtolower($fq_classlike_name)] ?? [] as $property_handler) {
@@ -118,6 +109,21 @@ class PropertyTypeProvider
                 $source,
                 $context
             );
+
+            if ($property_type !== null) {
+                return $property_type;
+            }
+        }
+
+        foreach (self::$handlers[strtolower($fq_classlike_name)] ?? [] as $property_handler) {
+            $event = new PropertyTypeProviderEvent(
+                $fq_classlike_name,
+                $property_name,
+                $read_mode,
+                $source,
+                $context
+            );
+            $property_type = $property_handler($event);
 
             if ($property_type !== null) {
                 return $property_type;

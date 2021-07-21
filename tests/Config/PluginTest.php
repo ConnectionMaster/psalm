@@ -1,52 +1,52 @@
 <?php
 namespace Psalm\Tests\Config;
 
+use PHPUnit\Framework\MockObject\MockObject;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Stmt\ClassLike;
-use PHPUnit\Framework\MockObject\MockObject;
 use Psalm\Codebase;
+use Psalm\Config;
+use Psalm\Context;
 use Psalm\FileSource;
+use Psalm\Internal\IncludeCollector;
+use Psalm\Internal\Provider\FakeFileProvider;
+use Psalm\Internal\RuntimeCaches;
+use Psalm\Plugin\EventHandler\AfterCodebasePopulatedInterface;
 use Psalm\Plugin\EventHandler\AfterEveryFunctionCallAnalysisInterface;
 use Psalm\Plugin\EventHandler\Event\AfterCodebasePopulatedEvent;
 use Psalm\Plugin\EventHandler\Event\AfterEveryFunctionCallAnalysisEvent;
 use Psalm\Plugin\Hook\AfterClassLikeVisitInterface;
 use Psalm\Plugin\Hook\AfterMethodCallAnalysisInterface;
+use Psalm\PluginRegistrationSocket;
 use Psalm\StatementsSource;
 use Psalm\Storage\ClassLikeStorage;
+use Psalm\Tests\Internal\Provider;
+use Psalm\Tests\TestConfig;
 use Psalm\Type\Union;
+
 use function define;
 use function defined;
-use const DIRECTORY_SEPARATOR;
 use function dirname;
 use function get_class;
 use function getcwd;
 use function microtime;
-use Psalm\Config;
-use Psalm\Context;
-use Psalm\Internal\IncludeCollector;
-use Psalm\Internal\RuntimeCaches;
-use Psalm\Plugin\EventHandler\AfterCodebasePopulatedInterface;
-use Psalm\PluginRegistrationSocket;
-use Psalm\Tests\Internal\Provider;
-use Psalm\Tests\TestConfig;
-use function sprintf;
-use function ob_start;
 use function ob_end_clean;
+use function ob_start;
+use function sprintf;
+
+use const DIRECTORY_SEPARATOR;
 
 class PluginTest extends \Psalm\Tests\TestCase
 {
     /** @var TestConfig */
     protected static $config;
 
-    /** @var ?\Psalm\Internal\Analyzer\ProjectAnalyzer */
-    protected $project_analyzer;
-
     public static function setUpBeforeClass() : void
     {
         self::$config = new TestConfig();
 
         if (!defined('PSALM_VERSION')) {
-            define('PSALM_VERSION', '2.0.0');
+            define('PSALM_VERSION', '4.0.0');
         }
 
         if (!defined('PHP_PARSER_VERSION')) {
@@ -57,7 +57,7 @@ class PluginTest extends \Psalm\Tests\TestCase
     public function setUp() : void
     {
         RuntimeCaches::clearAll();
-        $this->file_provider = new Provider\FakeFileProvider();
+        $this->file_provider = new FakeFileProvider();
     }
 
     private function getProjectAnalyzerWithConfig(Config $config): \Psalm\Internal\Analyzer\ProjectAnalyzer
@@ -497,7 +497,7 @@ class PluginTest extends \Psalm\Tests\TestCase
 
     public function testInheritedHookHandlersAreCalled(): void
     {
-        require_once dirname(__DIR__) . '/fixtures/stubs/extending_plugin_entrypoint.php';
+        require_once dirname(__DIR__) . '/fixtures/stubs/extending_plugin_entrypoint.phpstub';
 
         $this->project_analyzer = $this->getProjectAnalyzerWithConfig(
             TestConfig::loadFromXML(
@@ -1070,6 +1070,77 @@ class PluginTest extends \Psalm\Tests\TestCase
             a();
             '
         );
+
+        $this->analyzeFile($file_path, new Context());
+    }
+
+    public function testRemoveTaints(): void
+    {
+        $this->project_analyzer = $this->getProjectAnalyzerWithConfig(
+            TestConfig::loadFromXML(
+                dirname(__DIR__, 2) . DIRECTORY_SEPARATOR,
+                '<?xml version="1.0"?>
+                <psalm
+                    errorLevel="6"
+                    runTaintAnalysis="true"
+                >
+                    <projectFiles>
+                        <directory name="src" />
+                    </projectFiles>
+                    <plugins>
+                        <plugin filename="examples/plugins/SafeArrayKeyChecker.php" />
+                    </plugins>
+                </psalm>'
+            )
+        );
+
+        $this->project_analyzer->getCodebase()->config->initializePlugins($this->project_analyzer);
+
+        $file_path = getcwd() . '/src/somefile.php';
+
+        $this->addFile(
+            $file_path,
+            '<?php // --taint-analysis
+
+            /**
+             * @psalm-taint-sink html $build
+             */
+            function output(array $build) {}
+
+            $build = [
+                "nested" => [
+                    "safe_key" => $_GET["input"],
+                ],
+            ];
+            output($build);'
+        );
+
+        $this->project_analyzer->trackTaintedInputs();
+
+        $this->analyzeFile($file_path, new Context());
+
+        $this->addFile(
+            $file_path,
+            '<?php // --taint-analysis
+
+            /**
+             * @psalm-taint-sink html $build
+             */
+            function output(array $build) {}
+
+            $build = [
+                "nested" => [
+                    "safe_key" => $_GET["input"],
+                    "a" => $_GET["input"],
+                ],
+            ];
+            output($build);'
+        );
+
+        $this->project_analyzer->trackTaintedInputs();
+
+        $this->expectException(\Psalm\Exception\CodeException::class);
+        $this->expectExceptionMessageRegExp('/TaintedHtml/');
 
         $this->analyzeFile($file_path, new Context());
     }

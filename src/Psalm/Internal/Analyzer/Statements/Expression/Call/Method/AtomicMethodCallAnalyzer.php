@@ -2,28 +2,33 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression\Call\Method;
 
 use PhpParser;
+use Psalm\CodeLocation;
+use Psalm\Codebase;
+use Psalm\Context;
 use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
+use Psalm\Internal\Analyzer\ClassLikeNameOptions;
 use Psalm\Internal\Analyzer\FunctionLikeAnalyzer;
 use Psalm\Internal\Analyzer\MethodAnalyzer;
-use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\Call\ClassTemplateParamCollector;
 use Psalm\Internal\Analyzer\Statements\Expression\Call\ArgumentsAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\Call\ClassTemplateParamCollector;
+use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
+use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\Internal\Codebase\InternalCallMapHandler;
-use Psalm\Codebase;
-use Psalm\CodeLocation;
-use Psalm\Context;
+use Psalm\Internal\Codebase\VariableUseGraph;
 use Psalm\Internal\MethodIdentifier;
 use Psalm\Issue\MixedMethodCall;
 use Psalm\IssueBuffer;
 use Psalm\Type;
 use Psalm\Type\Atomic\TNamedObject;
-use function array_values;
-use function array_shift;
-use function get_class;
-use function strtolower;
+
 use function array_merge;
+use function array_shift;
+use function array_values;
+use function count;
+use function get_class;
+use function reset;
+use function strtolower;
 
 /**
  * This is a bunch of complex logic to handle the potential for missing methods,
@@ -44,6 +49,7 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
         PhpParser\Node\Expr\MethodCall $stmt,
         Codebase $codebase,
         Context $context,
+        Type\Union $lhs_type,
         Type\Atomic $lhs_type_part,
         ?Type\Atomic $static_type,
         bool $is_intersection,
@@ -80,6 +86,7 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                 $statements_analyzer,
                 $codebase,
                 $stmt,
+                $lhs_type,
                 $lhs_type_part,
                 $lhs_var_id,
                 $context,
@@ -139,10 +146,7 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                 $context->self,
                 $context->calling_method_id,
                 $statements_analyzer->getSuppressedIssues(),
-                true,
-                false,
-                true,
-                $lhs_type_part->from_docblock
+                new ClassLikeNameOptions(true, false, true, true, $lhs_type_part->from_docblock)
             );
         }
 
@@ -197,7 +201,8 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                 ? $statements_analyzer
                 : null,
             $statements_analyzer->getFilePath(),
-            false
+            false,
+            $context->insideUse()
         );
 
         $fake_method_exists = false;
@@ -269,6 +274,7 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                     $stmt,
                     $codebase,
                     $context,
+                    $lhs_type,
                     $lhs_type_part,
                     $lhs_var_id,
                     $result,
@@ -314,7 +320,9 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                         && !$context->collect_mutations
                         ? $statements_analyzer
                         : null,
-                    $statements_analyzer->getFilePath()
+                    $statements_analyzer->getFilePath(),
+                    true,
+                    $context->insideUse()
                 )
             ) {
                 $new_call_context = MissingMethodCallHandler::handleMagicMethod(
@@ -451,6 +459,7 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
         PhpParser\Node\Expr\MethodCall $stmt,
         Codebase $codebase,
         Context $context,
+        Type\Union $lhs_type,
         Type\Atomic $lhs_type_part,
         ?string $lhs_var_id,
         AtomicMethodCallAnalysisResult $result,
@@ -470,6 +479,7 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                 $stmt,
                 $codebase,
                 $context,
+                $lhs_type,
                 $intersection_type,
                 $lhs_type_part,
                 true,
@@ -544,6 +554,7 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
         StatementsAnalyzer $statements_analyzer,
         Codebase $codebase,
         PhpParser\Node\Expr\MethodCall $stmt,
+        Type\Union $lhs_type,
         Type\Atomic $lhs_type_part,
         ?string $lhs_var_id,
         Context $context,
@@ -600,10 +611,30 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                             }
                         }
 
+                        $origin_locations = [];
+
+                        if ($statements_analyzer->data_flow_graph instanceof VariableUseGraph) {
+                            foreach ($lhs_type->parent_nodes as $parent_node) {
+                                $origin_locations = array_merge(
+                                    $origin_locations,
+                                    $statements_analyzer->data_flow_graph->getOriginLocations($parent_node)
+                                );
+                            }
+                        }
+
+                        $origin_location = count($origin_locations) === 1 ? reset($origin_locations) : null;
+
+                        $name_code_location = new CodeLocation($statements_analyzer, $stmt->name);
+
+                        if ($origin_location && $origin_location->getHash() === $name_code_location->getHash()) {
+                            $origin_location = null;
+                        }
+
                         if (IssueBuffer::accepts(
                             new MixedMethodCall(
                                 $message,
-                                new CodeLocation($statements_analyzer, $stmt->name)
+                                $name_code_location,
+                                $origin_location
                             ),
                             $statements_analyzer->getSuppressedIssues()
                         )) {
@@ -691,7 +722,9 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                                 && !$context->collect_mutations
                                     ? $statements_analyzer
                                     : null,
-                                $statements_analyzer->getFilePath()
+                                $statements_analyzer->getFilePath(),
+                                true,
+                                $context->insideUse()
                             )) {
                                 $lhs_type_part = clone $lhs_type_part_new;
                                 $class_storage = $mixin_class_storage;
@@ -757,7 +790,9 @@ class AtomicMethodCallAnalyzer extends CallAnalyzer
                 && !$context->collect_mutations
                     ? $statements_analyzer
                     : null,
-                $statements_analyzer->getFilePath()
+                $statements_analyzer->getFilePath(),
+                true,
+                $context->insideUse()
             )) {
                 $mixin_declaring_class_storage = $codebase->classlike_storage_provider->get(
                     $class_storage->mixin_declaring_fqcln

@@ -1,11 +1,13 @@
 <?php
 namespace Psalm\Tests;
 
-use const DIRECTORY_SEPARATOR;
+use Psalm\Internal\Analyzer\FileAnalyzer;
+
 use function getcwd;
 use function preg_quote;
-use Psalm\Internal\Analyzer\FileAnalyzer;
 use function strpos;
+
+use const DIRECTORY_SEPARATOR;
 
 class IncludeTest extends TestCase
 {
@@ -545,7 +547,7 @@ class IncludeTest extends TestCase
                 'files' => [
                     getcwd() . DIRECTORY_SEPARATOR . 'file1.php' => '<?php
                         function getEndpoints() : void {
-                            $listFile = "tests/fixtures/stubs/custom_functions.php";
+                            $listFile = "tests/fixtures/stubs/custom_functions.phpstub";
                             if (!file_exists($listFile)) {
                                 throw new RuntimeException("Endpoint list not found");
                             }

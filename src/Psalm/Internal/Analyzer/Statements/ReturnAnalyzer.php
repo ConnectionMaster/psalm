@@ -2,22 +2,24 @@
 namespace Psalm\Internal\Analyzer\Statements;
 
 use PhpParser;
+use Psalm\CodeLocation;
 use Psalm\Codebase;
+use Psalm\Context;
+use Psalm\Exception\DocblockParseException;
 use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
+use Psalm\Internal\Analyzer\ClassLikeNameOptions;
 use Psalm\Internal\Analyzer\ClosureAnalyzer;
 use Psalm\Internal\Analyzer\CommentAnalyzer;
 use Psalm\Internal\Analyzer\FunctionLikeAnalyzer;
 use Psalm\Internal\Analyzer\Statements\Expression\Call\ClassTemplateParamCollector;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\Internal\Analyzer\TraitAnalyzer;
-use Psalm\Internal\Type\Comparator\UnionTypeComparator;
-use Psalm\CodeLocation;
-use Psalm\Context;
-use Psalm\Exception\DocblockParseException;
-use Psalm\Internal\DataFlow\DataFlowNode;
 use Psalm\Internal\Codebase\TaintFlowGraph;
-use Psalm\Internal\Type\TemplateResult;
+use Psalm\Internal\Codebase\VariableUseGraph;
+use Psalm\Internal\DataFlow\DataFlowNode;
+use Psalm\Internal\Type\Comparator\UnionTypeComparator;
 use Psalm\Internal\Type\TemplateInferredTypeReplacer;
+use Psalm\Internal\Type\TemplateResult;
 use Psalm\Issue\FalsableReturnStatement;
 use Psalm\Issue\InvalidDocblock;
 use Psalm\Issue\InvalidReturnStatement;
@@ -28,7 +30,11 @@ use Psalm\Issue\NoValue;
 use Psalm\Issue\NullableReturnStatement;
 use Psalm\IssueBuffer;
 use Psalm\Type;
+
+use function array_merge;
+use function count;
 use function explode;
+use function reset;
 use function strtolower;
 
 /**
@@ -36,14 +42,11 @@ use function strtolower;
  */
 class ReturnAnalyzer
 {
-    /**
-     * @return false|null
-     */
     public static function analyze(
         StatementsAnalyzer $statements_analyzer,
         PhpParser\Node\Stmt\Return_ $stmt,
         Context $context
-    ): ?bool {
+    ): void {
         $doc_comment = $stmt->getDocComment();
 
         $var_comments = [];
@@ -126,7 +129,7 @@ class ReturnAnalyzer
         }
 
         if ($stmt->expr) {
-            $context->inside_call = true;
+            $context->inside_return = true;
 
             if ($stmt->expr instanceof PhpParser\Node\Expr\Closure
                 || $stmt->expr instanceof PhpParser\Node\Expr\ArrowFunction
@@ -139,7 +142,8 @@ class ReturnAnalyzer
             }
 
             if (ExpressionAnalyzer::analyze($statements_analyzer, $stmt->expr, $context) === false) {
-                return false;
+                $context->inside_return = false;
+                return;
             }
 
             $stmt_expr_type = $statements_analyzer->node_data->getType($stmt->expr);
@@ -175,6 +179,8 @@ class ReturnAnalyzer
             } else {
                 $stmt_type = Type::getMixed();
             }
+
+            $context->inside_return = false;
         } else {
             $stmt_type = Type::getVoid();
         }
@@ -278,7 +284,7 @@ class ReturnAnalyzer
                     }
 
                     if ($local_return_type->isGenerator() && $storage->has_yield) {
-                        return null;
+                        return;
                     }
 
                     if ($stmt_type->hasMixed()) {
@@ -290,7 +296,7 @@ class ReturnAnalyzer
                                 ),
                                 $statements_analyzer->getSuppressedIssues()
                             )) {
-                                return false;
+                                return;
                             }
                         }
 
@@ -303,17 +309,37 @@ class ReturnAnalyzer
                         }
 
                         if ($stmt_type->isMixed()) {
+                            $origin_locations = [];
+
+                            if ($statements_analyzer->data_flow_graph instanceof VariableUseGraph) {
+                                foreach ($stmt_type->parent_nodes as $parent_node) {
+                                    $origin_locations = array_merge(
+                                        $origin_locations,
+                                        $statements_analyzer->data_flow_graph->getOriginLocations($parent_node)
+                                    );
+                                }
+                            }
+
+                            $origin_location = count($origin_locations) === 1 ? reset($origin_locations) : null;
+
+                            $return_location = new CodeLocation($source, $stmt->expr);
+
+                            if ($origin_location && $origin_location->getHash() === $return_location->getHash()) {
+                                $origin_location = null;
+                            }
+
                             if (IssueBuffer::accepts(
                                 new MixedReturnStatement(
                                     'Could not infer a return type',
-                                    new CodeLocation($source, $stmt->expr)
+                                    $return_location,
+                                    $origin_location
                                 ),
                                 $statements_analyzer->getSuppressedIssues()
                             )) {
                                 // fall through
                             }
 
-                            return null;
+                            return;
                         }
 
                         if (IssueBuffer::accepts(
@@ -328,7 +354,7 @@ class ReturnAnalyzer
                     }
 
                     if ($local_return_type->isMixed()) {
-                        return null;
+                        return;
                     }
 
                     if (!$context->collect_initializations
@@ -347,10 +373,10 @@ class ReturnAnalyzer
                             ),
                             $statements_analyzer->getSuppressedIssues()
                         )) {
-                            return false;
+                            return;
                         }
 
-                        return null;
+                        return;
                     }
 
                     $union_comparison_results = new \Psalm\Internal\Type\Comparator\TypeComparisonResult();
@@ -416,10 +442,11 @@ class ReturnAnalyzer
                                         new CodeLocation($source, $stmt->expr),
                                         $context->self,
                                         $context->calling_method_id,
-                                        $statements_analyzer->getSuppressedIssues()
+                                        $statements_analyzer->getSuppressedIssues(),
+                                        new ClassLikeNameOptions(true)
                                     ) === false
                                     ) {
-                                        return false;
+                                        return;
                                     }
                                 } elseif ($local_type_part instanceof Type\Atomic\TArray
                                     && $stmt->expr instanceof PhpParser\Node\Expr\Array_
@@ -436,10 +463,11 @@ class ReturnAnalyzer
                                                         new CodeLocation($source, $item->value),
                                                         $context->self,
                                                         $context->calling_method_id,
-                                                        $statements_analyzer->getSuppressedIssues()
+                                                        $statements_analyzer->getSuppressedIssues(),
+                                                        new ClassLikeNameOptions(true)
                                                     ) === false
                                                     ) {
-                                                        return false;
+                                                        return;
                                                     }
                                                 }
                                             }
@@ -516,8 +544,6 @@ class ReturnAnalyzer
                 }
             }
         }
-
-        return null;
     }
 
     private static function handleTaints(

@@ -61,7 +61,7 @@ class FunctionClassStringTemplateTest extends TestCase
                 '<?php
                     /**
                      * @template T as iterable
-                     * @param T::class $class
+                     * @param class-string<T> $class
                      */
                     function foo(string $class) : void {
                         $a = new $class();
@@ -236,7 +236,7 @@ class FunctionClassStringTemplateTest extends TestCase
                      * @template T as object
                      * @template S as object
                      * @param array<T> $a
-                     * @param class-string<S> $type
+                     * @param interface-string<S> $type
                      * @return array<T&S>
                      */
                     function filter(array $a, string $type): array {
@@ -265,7 +265,7 @@ class FunctionClassStringTemplateTest extends TestCase
                      * @template T as object
                      * @template S as object
                      * @param T $item
-                     * @param class-string<S> $type
+                     * @param interface-string<S> $type
                      * @return T&S
                      */
                     function filter($item, string $type) {
@@ -702,7 +702,7 @@ class FunctionClassStringTemplateTest extends TestCase
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {

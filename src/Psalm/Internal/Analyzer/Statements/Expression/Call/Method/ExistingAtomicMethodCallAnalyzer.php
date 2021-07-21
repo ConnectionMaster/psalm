@@ -2,20 +2,20 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression\Call\Method;
 
 use PhpParser;
+use Psalm\CodeLocation;
+use Psalm\Codebase;
+use Psalm\Context;
 use Psalm\Internal\Analyzer\FunctionLikeAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
 use Psalm\Internal\Analyzer\Statements\Expression\Call\ArgumentMapPopulator;
 use Psalm\Internal\Analyzer\Statements\Expression\Call\ClassTemplateParamCollector;
 use Psalm\Internal\Analyzer\Statements\Expression\Call\FunctionCallAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
 use Psalm\Internal\Analyzer\Statements\Expression\ExpressionIdentifier;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Internal\Type\Comparator\UnionTypeComparator;
 use Psalm\Internal\Codebase\InternalCallMapHandler;
-use Psalm\Codebase;
-use Psalm\CodeLocation;
-use Psalm\Context;
-use Psalm\Internal\MethodIdentifier;
 use Psalm\Internal\FileManipulation\FileManipulationBuffer;
+use Psalm\Internal\MethodIdentifier;
+use Psalm\Internal\Type\Comparator\UnionTypeComparator;
 use Psalm\Issue\InvalidPropertyAssignmentValue;
 use Psalm\Issue\MixedPropertyTypeCoercion;
 use Psalm\Issue\PossiblyInvalidPropertyAssignmentValue;
@@ -23,14 +23,16 @@ use Psalm\Issue\PropertyTypeCoercion;
 use Psalm\Issue\UndefinedThisPropertyAssignment;
 use Psalm\Issue\UndefinedThisPropertyFetch;
 use Psalm\IssueBuffer;
+use Psalm\Node\Expr\VirtualFuncCall;
 use Psalm\Plugin\EventHandler\Event\AfterMethodCallAnalysisEvent;
 use Psalm\Storage\Assertion;
 use Psalm\Type;
-use function strtolower;
+
 use function array_map;
+use function count;
 use function explode;
 use function in_array;
-use function count;
+use function strtolower;
 
 class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
 {
@@ -63,13 +65,14 @@ class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
 
         $cased_method_id = $fq_class_name . '::' . $stmt_name->name;
 
-        $result->existent_method_ids[] = $method_id;
+        $result->existent_method_ids[] = $method_id->__toString();
 
         if ($context->collect_initializations && $context->calling_method_id) {
             [$calling_method_class] = explode('::', $context->calling_method_id);
             $codebase->file_reference_provider->addMethodReferenceToClassMember(
                 $calling_method_class . '::__construct',
-                strtolower((string) $method_id)
+                strtolower((string) $method_id),
+                false
             );
         }
 
@@ -88,7 +91,7 @@ class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
         if ($fq_class_name === 'Closure' && $method_name_lc === '__invoke') {
             $statements_analyzer->node_data = clone $statements_analyzer->node_data;
 
-            $fake_function_call = new PhpParser\Node\Expr\FuncCall(
+            $fake_function_call = new VirtualFuncCall(
                 $stmt->var,
                 $args,
                 $stmt->getAttributes()
@@ -122,7 +125,8 @@ class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
             [$calling_method_class] = explode('::', $context->calling_method_id);
             $codebase->file_reference_provider->addMethodReferenceToClassMember(
                 $calling_method_class . '::__construct',
-                strtolower((string) $method_id)
+                strtolower((string) $method_id),
+                false
             );
         }
 
@@ -298,7 +302,7 @@ class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
                 }
             }
 
-            $class_template_params = $template_result->upper_bounds;
+            $class_template_params = $template_result->lower_bounds;
 
             if ($method_storage->assertions) {
                 self::applyAssertionsToContext(
@@ -318,11 +322,13 @@ class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
                     array_map(
                         function (Assertion $assertion) use (
                             $class_template_params,
-                            $lhs_var_id
+                            $lhs_var_id,
+                            $codebase
                         ) : Assertion {
                             return $assertion->getUntemplatedCopy(
                                 $class_template_params ?: [],
-                                $lhs_var_id
+                                $lhs_var_id,
+                                $codebase
                             );
                         },
                         $method_storage->if_true_assertions
@@ -336,11 +342,13 @@ class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
                     array_map(
                         function (Assertion $assertion) use (
                             $class_template_params,
-                            $lhs_var_id
+                            $lhs_var_id,
+                            $codebase
                         ) : Assertion {
                             return $assertion->getUntemplatedCopy(
                                 $class_template_params ?: [],
-                                $lhs_var_id
+                                $lhs_var_id,
+                                $codebase
                             );
                         },
                         $method_storage->if_false_assertions
@@ -422,7 +430,8 @@ class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
 
         $codebase = $statements_analyzer->getCodebase();
 
-        $first_arg_value = $stmt->args[0]->value;
+        $first_arg_value = $stmt->args[0]->value ?? null;
+
         if (!$first_arg_value instanceof PhpParser\Node\Scalar\String_) {
             return null;
         }
@@ -460,7 +469,9 @@ class ExistingAtomicMethodCallAnalyzer extends CallAnalyzer
 
                 // If a `@property` annotation is set, the type of the value passed to the
                 // magic setter must match the annotation.
-                $second_arg_type = $statements_analyzer->node_data->getType($stmt->args[1]->value);
+                $second_arg_type = isset($stmt->args[1])
+                    ? $statements_analyzer->node_data->getType($stmt->args[1]->value)
+                    : null;
 
                 if (isset($class_storage->pseudo_property_set_types['$' . $prop_name]) && $second_arg_type) {
                     $pseudo_set_type = \Psalm\Internal\Type\TypeExpander::expandUnion(

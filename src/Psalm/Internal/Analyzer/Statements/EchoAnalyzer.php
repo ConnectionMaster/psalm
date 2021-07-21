@@ -2,13 +2,13 @@
 namespace Psalm\Internal\Analyzer\Statements;
 
 use PhpParser;
+use Psalm\CodeLocation;
+use Psalm\Context;
 use Psalm\Internal\Analyzer\Statements\Expression\Call\ArgumentAnalyzer;
 use Psalm\Internal\Analyzer\Statements\Expression\CastAnalyzer;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Internal\DataFlow\TaintSink;
 use Psalm\Internal\Codebase\TaintFlowGraph;
-use Psalm\CodeLocation;
-use Psalm\Context;
+use Psalm\Internal\DataFlow\TaintSink;
 use Psalm\Issue\ForbiddenCode;
 use Psalm\Issue\ForbiddenEcho;
 use Psalm\Issue\ImpureFunctionCall;
@@ -37,19 +37,17 @@ class EchoAnalyzer
 
             $expr_type = $statements_analyzer->node_data->getType($expr);
 
-            if ($statements_analyzer->data_flow_graph
-                && $expr_type
-            ) {
-                $expr_type = CastAnalyzer::castStringAttempt(
-                    $statements_analyzer,
-                    $context,
-                    $expr_type,
-                    $expr,
-                    false
-                );
-            }
-
             if ($statements_analyzer->data_flow_graph instanceof TaintFlowGraph) {
+                if ($expr_type) {
+                    $expr_type = CastAnalyzer::castStringAttempt(
+                        $statements_analyzer,
+                        $context,
+                        $expr_type,
+                        $expr,
+                        false
+                    );
+                }
+
                 $call_location = new CodeLocation($statements_analyzer->getSource(), $stmt);
 
                 $echo_param_sink = TaintSink::getForMethodArgument(
@@ -62,6 +60,7 @@ class EchoAnalyzer
 
                 $echo_param_sink->taints = [
                     Type\TaintKind::INPUT_HTML,
+                    Type\TaintKind::INPUT_HAS_QUOTES,
                     Type\TaintKind::USER_SECRET,
                     Type\TaintKind::SYSTEM_SECRET
                 ];

@@ -2,20 +2,25 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression\Assignment;
 
 use PhpParser;
+use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Stmt\PropertyProperty;
+use Psalm\CodeLocation;
+use Psalm\Codebase;
 use Psalm\Config;
+use Psalm\Context;
 use Psalm\Internal\Analyzer\ClassAnalyzer;
 use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
 use Psalm\Internal\Analyzer\NamespaceAnalyzer;
-use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\Call\ClassTemplateParamCollector;
 use Psalm\Internal\Analyzer\Statements\Expression\ExpressionIdentifier;
 use Psalm\Internal\Analyzer\Statements\Expression\Fetch\AtomicPropertyFetchAnalyzer;
+use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Internal\Type\Comparator\UnionTypeComparator;
 use Psalm\Internal\Codebase\TaintFlowGraph;
-use Psalm\CodeLocation;
-use Psalm\Context;
+use Psalm\Internal\DataFlow\DataFlowNode;
+use Psalm\Internal\Type\Comparator\UnionTypeComparator;
+use Psalm\Internal\Type\TypeExpander;
 use Psalm\Issue\DeprecatedProperty;
 use Psalm\Issue\ImplicitToStringCast;
 use Psalm\Issue\ImpurePropertyAssignment;
@@ -36,18 +41,25 @@ use Psalm\Issue\PossiblyNullPropertyAssignment;
 use Psalm\Issue\PossiblyNullPropertyAssignmentValue;
 use Psalm\Issue\PropertyTypeCoercion;
 use Psalm\Issue\UndefinedClass;
-use Psalm\Issue\UndefinedPropertyAssignment;
 use Psalm\Issue\UndefinedMagicPropertyAssignment;
+use Psalm\Issue\UndefinedPropertyAssignment;
 use Psalm\Issue\UndefinedThisPropertyAssignment;
 use Psalm\IssueBuffer;
+use Psalm\Node\Expr\VirtualMethodCall;
+use Psalm\Node\Scalar\VirtualString;
+use Psalm\Node\VirtualArg;
+use Psalm\Node\VirtualIdentifier;
+use Psalm\Plugin\EventHandler\Event\AddRemoveTaintsEvent;
 use Psalm\Type;
 use Psalm\Type\Atomic\TNamedObject;
 use Psalm\Type\Atomic\TNull;
 use Psalm\Type\Atomic\TObject;
+
+use function array_merge;
 use function count;
 use function in_array;
+use function reset;
 use function strtolower;
-use Psalm\Internal\DataFlow\DataFlowNode;
 
 /**
  * @internal
@@ -94,12 +106,11 @@ class InstancePropertyAssignmentAnalyzer
             if ($class_property_type) {
                 $class_storage = $codebase->classlike_storage_provider->get($context->self);
 
-                $class_property_type = \Psalm\Internal\Type\TypeExpander::expandUnion(
+                $class_property_type = self::getExpandedPropertyType(
                     $codebase,
-                    clone $class_property_type,
-                    $class_storage->name,
-                    $class_storage->name,
-                    $class_storage->parent_class
+                    $context->self,
+                    $prop_name,
+                    $class_storage
                 );
             }
 
@@ -394,6 +405,16 @@ class InstancePropertyAssignmentAnalyzer
     ): void {
         foreach ($stmt->props as $prop) {
             if ($prop->default) {
+                if ($stmt->isReadonly()) {
+                    IssueBuffer::add(
+                        new InvalidPropertyAssignment(
+                            'Readonly property ' . $context->self . '::$' . $prop->name->name
+                                . ' cannot have a default',
+                            new CodeLocation($statements_analyzer->getSource(), $prop->default)
+                        )
+                    );
+                }
+
                 ExpressionAnalyzer::analyze($statements_analyzer, $prop->default, $context);
 
                 if ($prop_default_type = $statements_analyzer->node_data->getType($prop->default)) {
@@ -466,16 +487,23 @@ class InstancePropertyAssignmentAnalyzer
 
                 $data_flow_graph->addNode($property_node);
 
+                $event = new AddRemoveTaintsEvent($stmt, $context, $statements_analyzer, $codebase);
+
+                $added_taints = $codebase->config->eventDispatcher->dispatchAddTaints($event);
+                $removed_taints = $codebase->config->eventDispatcher->dispatchRemoveTaints($event);
+
                 $data_flow_graph->addPath(
                     $property_node,
                     $var_node,
                     'property-assignment'
-                        . ($stmt->name instanceof PhpParser\Node\Identifier ? '-' . $stmt->name : '')
+                        . ($stmt->name instanceof PhpParser\Node\Identifier ? '-' . $stmt->name : ''),
+                    $added_taints,
+                    $removed_taints
                 );
 
                 if ($assignment_value_type->parent_nodes) {
                     foreach ($assignment_value_type->parent_nodes as $parent_node) {
-                        $data_flow_graph->addPath($parent_node, $property_node, '=');
+                        $data_flow_graph->addPath($parent_node, $property_node, '=', $added_taints, $removed_taints);
                     }
                 }
 
@@ -483,7 +511,7 @@ class InstancePropertyAssignmentAnalyzer
 
                 if ($context->vars_in_scope[$var_id]->parent_nodes) {
                     foreach ($context->vars_in_scope[$var_id]->parent_nodes as $parent_node) {
-                        $data_flow_graph->addPath($parent_node, $var_node, '=');
+                        $data_flow_graph->addPath($parent_node, $var_node, '=', $added_taints, $removed_taints);
                     }
                 }
 
@@ -522,11 +550,28 @@ class InstancePropertyAssignmentAnalyzer
 
             $data_flow_graph->addNode($property_node);
 
-            $data_flow_graph->addPath($localized_property_node, $property_node, 'property-assignment');
+            $event = new AddRemoveTaintsEvent($stmt, $context, $statements_analyzer, $codebase);
+
+            $added_taints = $codebase->config->eventDispatcher->dispatchAddTaints($event);
+            $removed_taints = $codebase->config->eventDispatcher->dispatchRemoveTaints($event);
+
+            $data_flow_graph->addPath(
+                $localized_property_node,
+                $property_node,
+                'property-assignment',
+                $added_taints,
+                $removed_taints
+            );
 
             if ($assignment_value_type->parent_nodes) {
                 foreach ($assignment_value_type->parent_nodes as $parent_node) {
-                    $data_flow_graph->addPath($parent_node, $localized_property_node, '=');
+                    $data_flow_graph->addPath(
+                        $parent_node,
+                        $localized_property_node,
+                        '=',
+                        $added_taints,
+                        $removed_taints
+                    );
                 }
             }
 
@@ -550,7 +595,13 @@ class InstancePropertyAssignmentAnalyzer
 
                 $data_flow_graph->addNode($declaring_property_node);
 
-                $data_flow_graph->addPath($property_node, $declaring_property_node, 'property-assignment');
+                $data_flow_graph->addPath(
+                    $property_node,
+                    $declaring_property_node,
+                    'property-assignment',
+                    $added_taints,
+                    $removed_taints
+                );
             }
         }
     }
@@ -569,12 +620,12 @@ class InstancePropertyAssignmentAnalyzer
         string $prop_name,
         ?string &$var_id
     ): array {
-        $was_inside_use = $context->inside_use;
-        $context->inside_use = true;
+        $was_inside_general_use = $context->inside_general_use;
+        $context->inside_general_use = true;
 
         ExpressionAnalyzer::analyze($statements_analyzer, $stmt->var, $context);
 
-        $context->inside_use = $was_inside_use;
+        $context->inside_general_use = $was_inside_general_use;
 
         $lhs_type = $statements_analyzer->node_data->getType($stmt->var);
 
@@ -955,8 +1006,13 @@ class InstancePropertyAssignmentAnalyzer
 
             if ($var_id) {
                 if (isset($class_storage->pseudo_property_set_types['$' . $prop_name])) {
-                    $class_property_type =
-                        clone $class_storage->pseudo_property_set_types['$' . $prop_name];
+                    $class_property_type = TypeExpander::expandUnion(
+                        $codebase,
+                        clone $class_storage->pseudo_property_set_types['$' . $prop_name],
+                        $fq_class_name,
+                        $fq_class_name,
+                        $class_storage->parent_class
+                    );
 
                     $has_regular_setter = true;
 
@@ -980,54 +1036,14 @@ class InstancePropertyAssignmentAnalyzer
             }
 
             if ($assignment_value) {
-                if ($var_id) {
-                    $context->removeVarFromConflictingClauses(
-                        $var_id,
-                        Type::getMixed(),
-                        $statements_analyzer
-                    );
-
-                    unset($context->vars_in_scope[$var_id]);
-                }
-
-                $old_data_provider = $statements_analyzer->node_data;
-
-                $statements_analyzer->node_data = clone $statements_analyzer->node_data;
-
-                $fake_method_call = new PhpParser\Node\Expr\MethodCall(
-                    $stmt->var,
-                    new PhpParser\Node\Identifier('__set', $stmt->name->getAttributes()),
-                    [
-                        new PhpParser\Node\Arg(
-                            new PhpParser\Node\Scalar\String_(
-                                $prop_name,
-                                $stmt->name->getAttributes()
-                            )
-                        ),
-                        new PhpParser\Node\Arg(
-                            $assignment_value
-                        )
-                    ]
-                );
-
-                $suppressed_issues = $statements_analyzer->getSuppressedIssues();
-
-                if (!in_array('PossiblyNullReference', $suppressed_issues, true)) {
-                    $statements_analyzer->addSuppressedIssues(['PossiblyNullReference']);
-                }
-
-                \Psalm\Internal\Analyzer\Statements\Expression\Call\MethodCallAnalyzer::analyze(
-                    $statements_analyzer,
-                    $fake_method_call,
+                self::analyzeSetCall(
+                    $var_id,
                     $context,
-                    false
+                    $statements_analyzer,
+                    $stmt,
+                    $prop_name,
+                    $assignment_value
                 );
-
-                if (!in_array('PossiblyNullReference', $suppressed_issues, true)) {
-                    $statements_analyzer->removeSuppressedIssues(['PossiblyNullReference']);
-                }
-
-                $statements_analyzer->node_data = $old_data_provider;
             }
 
             /*
@@ -1109,7 +1125,12 @@ class InstancePropertyAssignmentAnalyzer
             $statements_analyzer,
             $context,
             new CodeLocation($statements_analyzer->getSource(), $stmt)
-        )) {
+        )
+        // when property existence is asserted by a plugin it doesn't necessarily has storage
+        || ($codebase->properties->hasStorage($property_id)
+            && $codebase->properties->getStorage($property_id)->is_static
+        )
+        ) {
             if ($stmt->var instanceof PhpParser\Node\Expr\Variable && $stmt->var->name === 'this') {
                 // if this is a proper error, we'll see it on the first pass
                 if ($context->collect_mutations) {
@@ -1359,10 +1380,32 @@ class InstancePropertyAssignmentAnalyzer
             );
 
             if (!$class_property_type->hasMixed() && $assignment_value_type->hasMixed()) {
+                $origin_locations = [];
+
+                if ($statements_analyzer->data_flow_graph instanceof \Psalm\Internal\Codebase\VariableUseGraph) {
+                    foreach ($assignment_value_type->parent_nodes as $parent_node) {
+                        $origin_locations = array_merge(
+                            $origin_locations,
+                            $statements_analyzer->data_flow_graph->getOriginLocations($parent_node)
+                        );
+                    }
+                }
+
+                $origin_location = count($origin_locations) === 1 ? reset($origin_locations) : null;
+
+                $message = $var_id
+                    ? 'Unable to determine the type that ' . $var_id . ' is being assigned to'
+                    : 'Unable to determine the type of this assignment';
+
+                if ($origin_location && $origin_location->getLineNumber() === $stmt->getLine()) {
+                    $origin_location = null;
+                }
+
                 if (IssueBuffer::accepts(
                     new MixedAssignment(
-                        'Cannot assign' . ($var_id ? ' ' . $var_id . ' ' : ' ') . 'to a mixed type',
-                        new CodeLocation($statements_analyzer->getSource(), $stmt)
+                        $message,
+                        new CodeLocation($statements_analyzer->getSource(), $stmt),
+                        $origin_location
                     ),
                     $statements_analyzer->getSuppressedIssues()
                 )) {
@@ -1376,5 +1419,129 @@ class InstancePropertyAssignmentAnalyzer
             $property_id,
             $assignment_value_type
         );
+    }
+
+    public static function getExpandedPropertyType(
+        Codebase $codebase,
+        string $fq_class_name,
+        string $property_name,
+        \Psalm\Storage\ClassLikeStorage $storage
+    ) : ?Type\Union {
+        $property_class_name = $codebase->properties->getDeclaringClassForProperty(
+            $fq_class_name . '::$' . $property_name,
+            true
+        );
+
+        if ($property_class_name === null) {
+            return null;
+        }
+
+        $property_class_storage = $codebase->classlike_storage_provider->get($property_class_name);
+
+        $property_storage = $property_class_storage->properties[$property_name];
+
+        if (!$property_storage->type) {
+            return null;
+        }
+
+        $property_type = clone $property_storage->type;
+
+        $fleshed_out_type = !$property_type->isMixed()
+            ? \Psalm\Internal\Type\TypeExpander::expandUnion(
+                $codebase,
+                $property_type,
+                $fq_class_name,
+                $fq_class_name,
+                $storage->parent_class,
+                true,
+                false,
+                $storage->final
+            )
+            : $property_type;
+
+        $class_template_params = ClassTemplateParamCollector::collect(
+            $codebase,
+            $property_class_storage,
+            $storage,
+            null,
+            new Type\Atomic\TNamedObject($fq_class_name),
+            true
+        );
+
+        $template_result = new \Psalm\Internal\Type\TemplateResult(
+            $class_template_params ?: [],
+            []
+        );
+
+        if ($class_template_params) {
+            $fleshed_out_type = \Psalm\Internal\Type\TemplateStandinTypeReplacer::replace(
+                $fleshed_out_type,
+                $template_result,
+                $codebase,
+                null,
+                null,
+                null
+            );
+        }
+
+        return $fleshed_out_type;
+    }
+
+    private static function analyzeSetCall(
+        ?string $var_id,
+        Context $context,
+        StatementsAnalyzer $statements_analyzer,
+        PropertyFetch $stmt,
+        string $prop_name,
+        Expr $assignment_value
+    ): void {
+        if ($var_id) {
+            $context->removeVarFromConflictingClauses(
+                $var_id,
+                Type::getMixed(),
+                $statements_analyzer
+            );
+
+            unset($context->vars_in_scope[$var_id]);
+        }
+
+        $old_data_provider = $statements_analyzer->node_data;
+
+        $statements_analyzer->node_data = clone $statements_analyzer->node_data;
+
+        $fake_method_call = new VirtualMethodCall(
+            $stmt->var,
+            new VirtualIdentifier('__set', $stmt->name->getAttributes()),
+            [
+                new VirtualArg(
+                    new VirtualString(
+                        $prop_name,
+                        $stmt->name->getAttributes()
+                    )
+                ),
+                new VirtualArg(
+                    $assignment_value
+                )
+            ]
+        );
+
+        $suppressed_issues = $statements_analyzer->getSuppressedIssues();
+
+        if (!in_array('PossiblyNullReference', $suppressed_issues, true)) {
+            $statements_analyzer->addSuppressedIssues(['PossiblyNullReference']);
+        }
+
+        \Psalm\Internal\Analyzer\Statements\Expression\Call\MethodCallAnalyzer::analyze(
+            $statements_analyzer,
+            $fake_method_call,
+            $context,
+            false
+        );
+
+        if (!in_array('PossiblyNullReference', $suppressed_issues, true)) {
+            $statements_analyzer->removeSuppressedIssues(['PossiblyNullReference']);
+        }
+
+        $statements_analyzer->node_data = $old_data_provider;
     }
 }

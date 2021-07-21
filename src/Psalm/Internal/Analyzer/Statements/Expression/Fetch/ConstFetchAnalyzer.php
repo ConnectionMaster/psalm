@@ -3,22 +3,23 @@ namespace Psalm\Internal\Analyzer\Statements\Expression\Fetch;
 
 use PhpParser;
 use Psalm\Aliases;
+use Psalm\CodeLocation;
+use Psalm\Codebase;
+use Psalm\Context;
 use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
 use Psalm\Internal\Analyzer\NamespaceAnalyzer;
-use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
 use Psalm\Internal\Analyzer\Statements\Expression\SimpleTypeInferer;
-use Psalm\Codebase;
-use Psalm\CodeLocation;
-use Psalm\Context;
+use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
+use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\Issue\UndefinedConstant;
 use Psalm\IssueBuffer;
 use Psalm\Type;
+
 use function array_key_exists;
+use function array_pop;
+use function explode;
 use function implode;
 use function strtolower;
-use function explode;
-use function array_pop;
 
 /**
  * @internal
@@ -56,6 +57,29 @@ class ConstFetchAnalyzer
                     $const_name,
                     $stmt->name instanceof PhpParser\Node\Name\FullyQualified,
                     $context
+                );
+
+                $codebase = $statements_analyzer->getCodebase();
+
+                $aliased_constants = $statements_analyzer->getAliases()->constants;
+                if (isset($aliased_constants[$const_name])) {
+                    $fq_const_name = $aliased_constants[$const_name];
+                } elseif ($stmt->name instanceof PhpParser\Node\Name\FullyQualified) {
+                    $fq_const_name = $const_name;
+                } else {
+                    $fq_const_name = Type::getFQCLNFromString($const_name, $statements_analyzer->getAliases());
+                }
+
+                $codebase->analyzer->addNodeReference(
+                    $statements_analyzer->getFilePath(),
+                    $stmt,
+                    $const_type
+                        ? $fq_const_name
+                        : '*'
+                            . ($stmt->name instanceof PhpParser\Node\Name\FullyQualified
+                                ? '\\'
+                                : $statements_analyzer->getNamespace() . '-')
+                            . $const_name
                 );
 
                 if ($const_type) {

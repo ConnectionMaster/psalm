@@ -2,8 +2,9 @@
 namespace Psalm\Report;
 
 use Psalm\Config;
-use Psalm\Report;
 use Psalm\Internal\Analyzer\DataFlowNodeData;
+use Psalm\Report;
+
 use function substr;
 
 class ConsoleReport extends Report
@@ -52,6 +53,14 @@ class ConsoleReport extends Report
                     . ($is_error ? "\e[97;41m" : "\e[30;47m") . substr($snippet, $selection_start, $selection_length)
                     . "\e[0m" . substr($snippet, $selection_length + $selection_start) . "\n";
             }
+        }
+
+        if ($issue_data->other_references) {
+            if ($this->show_snippet) {
+                $issue_string .= "\n";
+            }
+
+            $issue_string .= $this->getTaintSnippets($issue_data->other_references);
         }
 
         return $issue_string;

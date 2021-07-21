@@ -1,9 +1,10 @@
 <?php
 namespace Psalm\Tests;
 
-use function array_values;
 use Psalm\Internal\Type\TypeCombiner;
 use Psalm\Type;
+
+use function array_values;
 
 class TypeCombinationTest extends TestCase
 {
@@ -54,6 +55,15 @@ class TypeCombinationTest extends TestCase
                     function foo(string $type_name) : bool {
                         return $type_name === "array";
                     }',
+            ],
+            'NeverTwice' => [
+                '<?php
+                    /** @return no-return */
+                    function other() {
+                        throw new Exception();
+                    }
+
+                    rand(0,1) ? die() : other();',
             ],
         ];
     }
@@ -339,28 +349,28 @@ class TypeCombinationTest extends TestCase
                 ],
             ],
             'combineObjectTypeWithIntKeyedArray' => [
-                'array<int|string(a), int|string>',
+                'array<"a"|int, int|string>',
                 [
                     'array{a: int}',
                     'array<int, string>',
                 ],
             ],
             'combineNestedObjectTypeWithTKeyedArrayIntKeyedArray' => [
-                'array{a: array<int|string(a), int|string>}',
+                'array{a: array<"a"|int, int|string>}',
                 [
                     'array{a: array{a: int}}',
                     'array{a: array<int, string>}',
                 ],
             ],
             'combineIntKeyedObjectTypeWithNestedIntKeyedArray' => [
-                'array<int, array<int|string(a), int|string>>',
+                'array<int, array<"a"|int, int|string>>',
                 [
                     'array<int, array{a:int}>',
                     'array<int, array<int, string>>',
                 ],
             ],
             'combineNestedObjectTypeWithNestedIntKeyedArray' => [
-                'array<int|string(a), array<int|string(a), int|string>>',
+                'array<"a"|int, array<"a"|int, int|string>>',
                 [
                     'array{a: array{a: int}}',
                     'array<int, array<int, string>>',
@@ -431,7 +441,7 @@ class TypeCombinationTest extends TestCase
                 ],
             ],
             'objectLikePlusArrayEqualsArray' => [
-                'array<string(a)|string(b)|string(c), int(1)|int(2)|int(3)>',
+                'array<"a"|"b"|"c", 1|2|3>',
                 [
                     'array<"a"|"b"|"c", 1|2|3>',
                     'array{a: 1|2, b: 2|3, c: 1|3}',
@@ -477,6 +487,34 @@ class TypeCombinationTest extends TestCase
                 [
                     'class-string',
                     'Exception::class',
+                ],
+            ],
+            'combineClassStringWithNumericString' => [
+                'class-string|numeric-string',
+                [
+                    'class-string',
+                    'numeric-string',
+                ],
+            ],
+            'combineRefinedClassStringWithNumericString' => [
+                'class-string<Exception>|numeric-string',
+                [
+                    'class-string<Exception>',
+                    'numeric-string',
+                ],
+            ],
+            'combineClassStringWithTraitString' => [
+                'class-string|trait-string',
+                [
+                    'class-string',
+                    'trait-string',
+                ],
+            ],
+            'combineRefinedClassStringWithTraitString' => [
+                'class-string<Exception>|trait-string',
+                [
+                    'class-string<Exception>',
+                    'trait-string',
                 ],
             ],
             'combineCallableAndCallableString' => [
@@ -571,14 +609,14 @@ class TypeCombinationTest extends TestCase
                 ],
             ],
             'combineZeroAndPositiveInt' => [
-                'int(0)|positive-int',
+                '0|positive-int',
                 [
                     '0',
                     'positive-int',
                 ],
             ],
             'combinePositiveIntAndZero' => [
-                'int(0)|positive-int',
+                '0|positive-int',
                 [
                     'positive-int',
                     '0',
@@ -615,7 +653,7 @@ class TypeCombinationTest extends TestCase
                 ],
             ],
             'combineZeroOneAndPositiveInt' => [
-                'int(0)|positive-int',
+                '0|positive-int',
                 [
                     '0',
                     '1',
@@ -623,7 +661,7 @@ class TypeCombinationTest extends TestCase
                 ],
             ],
             'combinePositiveIntOneAndZero' => [
-                'int(0)|positive-int',
+                '0|positive-int',
                 [
                     'positive-int',
                     '1',
@@ -637,25 +675,109 @@ class TypeCombinationTest extends TestCase
                     'positive-int',
                 ],
             ],
-            'combinNonEmptyArrayAndKeyedArray' => [
+            'combineNonEmptyArrayAndKeyedArray' => [
                 'array<int, int>',
                 [
                     'non-empty-array<int, int>',
                     'array{0?:int}',
                 ]
             ],
-            'combinNonEmptyStringAndLiteral' => [
+            'combineNonEmptyStringAndLiteral' => [
                 'non-empty-string',
                 [
                     'non-empty-string',
                     '"foo"',
                 ]
             ],
-            'combinLiteralAndNonEmptyString' => [
+            'combineLiteralAndNonEmptyString' => [
                 'non-empty-string',
                 [
                     '"foo"',
                     'non-empty-string'
+                ]
+            ],
+            'combineNonFalsyNonEmptyString' => [
+                'non-empty-string',
+                [
+                    'non-falsy-string',
+                    'non-empty-string'
+                ]
+            ],
+            'combineNonEmptyNonFalsyString' => [
+                'non-empty-string',
+                [
+                    'non-empty-string',
+                    'non-falsy-string'
+                ]
+            ],
+            'combineNonEmptyStringAndNumericString' => [
+                'non-empty-string',
+                [
+                    'non-empty-string',
+                    'numeric-string'
+                ]
+            ],
+            'combineNumericStringAndNonEmptyString' => [
+                'non-empty-string',
+                [
+                    'numeric-string',
+                    'non-empty-string'
+                ]
+            ],
+            'combineNonEmptyLowercaseAndNonFalsyString' => [
+                'non-empty-string',
+                [
+                    'non-falsy-string',
+                    'non-empty-lowercase-string',
+                ]
+            ],
+            'combineNonEmptyAndEmptyScalar' => [
+                'scalar',
+                [
+                    'non-empty-scalar',
+                    'empty-scalar',
+                ]
+            ],
+            'combineLiteralStringAndNonspecificLiteral' => [
+                'literal-string',
+                [
+                    'literal-string',
+                    '"foo"',
+                ]
+            ],
+            'combineNonspecificLiteralAndLiteralString' => [
+                'literal-string',
+                [
+                    '"foo"',
+                    'literal-string',
+                ]
+            ],
+            'combineLiteralIntAndNonspecificLiteral' => [
+                'literal-int',
+                [
+                    'literal-int',
+                    '5',
+                ]
+            ],
+            'combineNonspecificLiteralAndLiteralInt' => [
+                'literal-int',
+                [
+                    '5',
+                    'literal-int',
+                ]
+            ],
+            'combineNonspecificLiteralAndPositiveInt' => [
+                'int',
+                [
+                    'positive-int',
+                    'literal-int',
+                ]
+            ],
+            'combinePositiveAndLiteralInt' => [
+                'int',
+                [
+                    'literal-int',
+                    'positive-int',
                 ]
             ],
         ];

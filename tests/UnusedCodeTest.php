@@ -3,6 +3,7 @@ namespace Psalm\Tests;
 
 use Psalm\Config;
 use Psalm\Context;
+use Psalm\Internal\Provider\FakeFileProvider;
 use Psalm\Internal\RuntimeCaches;
 use Psalm\Tests\Internal\Provider;
 
@@ -15,7 +16,7 @@ class UnusedCodeTest extends TestCase
     {
         RuntimeCaches::clearAll();
 
-        $this->file_provider = new Provider\FakeFileProvider();
+        $this->file_provider = new FakeFileProvider();
 
         $this->project_analyzer = new \Psalm\Internal\Analyzer\ProjectAnalyzer(
             new TestConfig(),
@@ -49,6 +50,8 @@ class UnusedCodeTest extends TestCase
             $file_path,
             $code
         );
+
+        $this->project_analyzer->setPhpVersion('8.0');
 
         foreach ($error_levels as $error_level) {
             $this->project_analyzer->getCodebase()->config->setCustomErrorLevel($error_level, Config::REPORT_SUPPRESS);
@@ -204,13 +207,11 @@ class UnusedCodeTest extends TestCase
                             }
                         }
 
-                        private function a(int $a, int $b): self
+                        private function a(int $a, int $b): void
                         {
                             $this->v($a, $b);
 
                             $this->i->foo();
-
-                            return $this;
                         }
 
                         private function v(int $a, int $b): void
@@ -372,18 +373,22 @@ class UnusedCodeTest extends TestCase
                 '<?php
 
                 class C {
-                    /** @var int */
-                    protected $foo = 1;
+                    protected int $foo = 1;
                     public function bar() : void {
                         $this->foo = 5;
+                    }
+
+                    public function getFoo(): void {
+                        echo $this->foo;
                     }
                 }
 
                 class D extends C {
-                    protected $foo = 2;
+                    protected int $foo = 2;
                 }
 
-                (new D)->bar();',
+                (new D)->bar();
+                (new D)->getFoo();',
             ],
             'usedClassAfterExtensionLoaded' => [
                 '<?php
@@ -408,15 +413,14 @@ class UnusedCodeTest extends TestCase
 
                         /**
                          * @param class-string<O>|null $type
-                         * @return self
                          */
-                        public function addType(?string $type, array $ids = array())
+                        public function addType(?string $type, array $ids = array()): void
                         {
                             if ($this->a) {
                                 $ids = self::mirror($ids);
                             }
                             $this->_types[$type ?: ""] = new ArrayObject($ids);
-                            return $this;
+                            return;
                         }
                     }
 
@@ -731,7 +735,7 @@ class UnusedCodeTest extends TestCase
                         /**
                          * @var array<string, string>
                          */
-                        public $foo = [];
+                        public static $foo = [];
 
                         /**
                          * @param array<string, string> $map
@@ -752,6 +756,298 @@ class UnusedCodeTest extends TestCase
                     $test = new Test(1, "ame");
                     echo $test->id;
                     echo $test->name;'
+            ],
+            'unusedNoReturnFunctionCall' => [
+                '<?php
+                    /**
+                     * @return no-return
+                     *
+                     * @pure
+                     *
+                     * @throws RuntimeException
+                     */
+                    function invariant_violation(string $message): void
+                    {
+                        throw new RuntimeException($message);
+                    }
+
+                    /**
+                     * @pure
+                     */
+                    function reverse(string $string): string
+                    {
+                        if ("" === $string) {
+                            invariant_violation("i do not like empty strings.");
+                        }
+
+                        return strrev($string);
+                    }'
+            ],
+            'unusedByReferenceFunctionCall' => [
+                '<?php
+                    function bar(string &$str): string
+                    {
+                        $str .= "foo";
+
+                        return $str;
+                    }
+
+                    function baz(): string
+                    {
+                        $f = "foo";
+                        bar($f);
+
+                        return $f;
+                    }'
+            ],
+            'unusedVoidByReferenceFunctionCall' => [
+                '<?php
+                    function bar(string &$str): void
+                    {
+                        $str .= "foo";
+                    }
+
+                    function baz(): string
+                    {
+                        $f = "foo";
+                        bar($f);
+
+                        return $f;
+                    }'
+            ],
+            'unusedNamedByReferenceFunctionCall' => [
+                '<?php
+                    function bar(string $c = "", string &$str = ""): string
+                    {
+                        $c .= $str;
+                        $str .= $c;
+
+                        return $c;
+                    }
+
+                    function baz(): string
+                    {
+                        $f = "foo";
+                        bar(str: $f);
+
+                        return $f;
+                    }'
+            ],
+            'unusedNamedByReferenceFunctionCallV2' => [
+                '<?php
+                    function bar(string &$st, string &$str = ""): string
+                    {
+                        $st .= $str;
+
+                        return $st;
+                    }
+
+                    function baz(): string
+                    {
+                        $f = "foo";
+                        bar(st: $f);
+
+                        return $f;
+                    }',
+            ],
+            'unusedNamedByReferenceFunctionCallV3' => [
+                '<?php
+                    function bar(string &$st, ?string &$str = ""): string
+                    {
+                        $st .= (string) $str;
+
+                        return $st;
+                    }
+
+                    function baz(): string
+                    {
+                        $f = "foo";
+                        bar(st: $f, str: $c);
+
+                        return $f;
+                    }',
+            ],
+            'functionCallUsedInThrow' => [
+                '<?php
+                    /**
+                     * @psalm-pure
+                     */
+                    function getException(): \Exception
+                    {
+                        return new \Exception();
+                    }
+
+                    throw getException();'
+            ],
+            'nullableMethodCallIsUsed' => [
+                '<?php
+                    final class Test {
+                        public function test(): void {
+                        }
+                    }
+
+                    final class TestFactory {
+                        /**
+                         * @psalm-pure
+                         */
+                        public function create(bool $returnNull): ?Test {
+                            if ($returnNull) {
+                                return null;
+                            }
+
+                            return new Test();
+                        }
+                    }
+
+                    $factory = new TestFactory();
+                    $factory->create(false)?->test();
+
+                    $exception = new \Exception();
+
+                    throw ($exception->getPrevious() ?? $exception);'
+            ],
+            'publicPropertyReadInFile' => [
+                '<?php
+                    class A {
+                        public string $a;
+
+                        public function __construct() {
+                            $this->a = "hello";
+                        }
+                    }
+
+                    $foo = new A();
+                    echo $foo->a;',
+            ],
+            'publicPropertyReadInMethod' => [
+                '<?php
+                    class A {
+                        public string $a = "hello";
+                    }
+
+                    class B {
+                        public function foo(A $a): void {
+                            if ($a->a === "goodbye") {}
+                        }
+                    }
+
+                    (new B)->foo(new A());',
+            ],
+            'privatePropertyReadInMethod' => [
+                '<?php
+                    class A {
+                        private string $a;
+
+                        public function __construct() {
+                            $this->a = "hello";
+                        }
+
+                        public function emitA(): void {
+                            echo $this->a;
+                        }
+                    }
+
+                    (new A())->emitA();',
+            ],
+            'fluentMethodsAllowed' => [
+                '<?php
+                    class A {
+                        public function foo(): static {
+                            return $this;
+                        }
+
+                        public function bar(): static {
+                            return $this;
+                        }
+                    }
+
+                    (new A())->foo()->bar();',
+            ],
+            'unusedInterfaceReturnValueWithImplementingClassSuppressed' => [
+                '<?php
+                    interface IWorker {
+                        /** @psalm-suppress PossiblyUnusedReturnValue */
+                        public function work(): bool;
+                    }
+
+                    class Worker implements IWorker{
+                        public function work(): bool {
+                            return true;
+                        }
+                    }
+
+                    function f(IWorker $worker): void {
+                        $worker->work();
+                    }
+
+                    f(new Worker());',
+            ],
+            'interfaceReturnValueWithImplementingAndAbstractClass' => [
+                '<?php
+                    interface IWorker {
+                        public function work(): int;
+                    }
+
+                    class AbstractWorker implements IWorker {
+                        public function work(): int {
+                            return 0;
+                        }
+                    }
+
+                    class Worker extends AbstractWorker {
+                        public function work(): int {
+                            return 1;
+                        }
+                    }
+
+                    class AnotherWorker extends AbstractWorker {}
+
+                    function f(IWorker $worker): void {
+                        echo $worker->work();
+                    }
+
+                    f(new Worker());
+                    f(new AnotherWorker());',
+            ],
+            'methodReturnValueUsedInThrow' => [
+                '<?php
+                    class A {
+                        public function foo() : Exception {
+                            return new Exception;
+                        }
+                    }
+                    throw (new A)->foo();
+                '
+            ],
+            'staticMethodReturnValueUsedInThrow' => [
+                '<?php
+                    class A {
+                        public static function foo() : Exception {
+                            return new Exception;
+                        }
+                    }
+                    throw A::foo();
+                '
+            ],
+            'variableUsedAsUnaryMinusOperand' => [
+                '<?php
+                    function f(): int
+                    {
+                        $a = 1;
+                        $b = -$a;
+                        return $b;
+                    }
+                ',
+            ],
+            'variableUsedAsUnaryPlusOperand' => [
+                '<?php
+                    function f(): int
+                    {
+                        $a = 1;
+                        $b = +$a;
+                        return $b;
+                    }
+                ',
             ],
         ];
     }
@@ -1066,6 +1362,117 @@ class UnusedCodeTest extends TestCase
                         return false;
                     }',
                 'error_message' => 'UnevaluatedCode',
+            ],
+            'UnusedFunctionCallWithOptionalByReferenceParameter' => [
+                '<?php
+                    /**
+                     * @pure
+                     */
+                    function bar(string $c, string &$str = ""): string
+                    {
+                        $c .= $str;
+
+                        return $c;
+                    }
+
+                    /**
+                     * @pure
+                     */
+                    function baz(): string
+                    {
+                        $f = "foo";
+                        bar($f);
+
+                        return $f;
+                    }',
+                'error_message' => 'UnusedFunctionCall',
+            ],
+            'UnusedFunctionCallWithOptionalByReferenceParameterV2' => [
+                '<?php
+                    /**
+                     * @pure
+                     */
+                    function bar(string $st, string &$str = ""): string
+                    {
+                        $st .= $str;
+
+                        return $st;
+                    }
+
+                    /**
+                     * @pure
+                     */
+                    function baz(): string
+                    {
+                        $f = "foo";
+                        bar(st: $f);
+
+                        return $f;
+                    }',
+                'error_message' => 'UnusedFunctionCall',
+            ],
+            'propertyWrittenButNotRead' => [
+                '<?php
+                    class A {
+                        public string $a = "hello";
+                        public string $b = "world";
+
+                        public function __construct() {
+                            $this->a = "hello";
+                            $this->b = "world";
+                        }
+                    }
+
+                    $foo = new A();
+                    echo $foo->a;',
+                'error_message' => 'PossiblyUnusedProperty',
+            ],
+            'unusedInterfaceReturnValue' => [
+                '<?php
+                    interface I {
+                        public function work(): bool;
+                    }
+
+                    function f(I $worker): void {
+                        $worker->work();
+                    }',
+                'error_message' => 'PossiblyUnusedReturnValue',
+            ],
+            'unusedInterfaceReturnValueWithImplementingClass' => [
+                '<?php
+                    interface IWorker {
+                        public function work(): bool;
+                    }
+
+                    class Worker implements IWorker{
+                        public function work(): bool {
+                            return true;
+                        }
+                    }
+
+                    function f(IWorker $worker): void {
+                        $worker->work();
+                    }
+
+                    f(new Worker());',
+                'error_message' => 'PossiblyUnusedReturnValue',
+            ],
+            'interfaceWithImplementingClassMethodUnused' => [
+                '<?php
+                    interface IWorker {
+                        public function work(): void;
+                    }
+
+                    class Worker implements IWorker {
+                        public function work(): void {}
+                    }
+
+                    function f(IWorker $worker): void {
+                        echo get_class($worker);
+                    }
+
+                    f(new Worker());',
+                'error_message' => 'PossiblyUnusedMethod',
             ],
         ];
     }

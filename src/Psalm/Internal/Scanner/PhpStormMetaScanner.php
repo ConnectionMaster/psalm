@@ -6,11 +6,13 @@ use Psalm\Codebase;
 use Psalm\Plugin\EventHandler\Event\FunctionReturnTypeProviderEvent;
 use Psalm\Plugin\EventHandler\Event\MethodReturnTypeProviderEvent;
 use Psalm\Type;
-use function strtolower;
+
+use function count;
 use function implode;
 use function is_string;
-use function strpos;
 use function str_replace;
+use function strpos;
+use function strtolower;
 
 /**
  * @internal
@@ -22,6 +24,10 @@ class PhpStormMetaScanner
      */
     public static function handleOverride(array $args, Codebase $codebase): void
     {
+        if (count($args) < 2) {
+            return;
+        }
+
         $identifier = $args[0]->value;
 
         if (!$args[1]->value instanceof PhpParser\Node\Expr\FuncCall

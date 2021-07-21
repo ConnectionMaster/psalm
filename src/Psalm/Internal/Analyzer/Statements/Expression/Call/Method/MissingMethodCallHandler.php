@@ -2,14 +2,19 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression\Call\Method;
 
 use PhpParser;
-use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\Call\ArgumentsAnalyzer;
-use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Codebase;
 use Psalm\CodeLocation;
+use Psalm\Codebase;
 use Psalm\Context;
+use Psalm\Internal\Analyzer\Statements\Expression\Call\ArgumentsAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
+use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\Internal\MethodIdentifier;
+use Psalm\Node\Expr\VirtualArray;
+use Psalm\Node\Expr\VirtualArrayItem;
+use Psalm\Node\Scalar\VirtualString;
+use Psalm\Node\VirtualArg;
 use Psalm\Type;
+
 use function array_map;
 use function array_merge;
 
@@ -34,7 +39,7 @@ class MissingMethodCallHandler
                 $statements_analyzer,
                 $method_id->fq_class_name,
                 $method_id->method_name,
-                $stmt->args,
+                $stmt,
                 $context,
                 new CodeLocation($statements_analyzer->getSource(), $stmt->name)
             );
@@ -73,7 +78,7 @@ class MissingMethodCallHandler
 
         if (isset($class_storage->pseudo_methods[$method_name_lc])) {
             $result->has_valid_method_call_type = true;
-            $result->existent_method_ids[] = $method_id;
+            $result->existent_method_ids[] = $method_id->__toString();
 
             $pseudo_method_storage = $class_storage->pseudo_methods[$method_name_lc];
 
@@ -129,7 +134,7 @@ class MissingMethodCallHandler
 
                 return null;
             }
-        } else {
+        } elseif ($all_intersection_return_type == null) {
             ArgumentsAnalyzer::analyze(
                 $statements_analyzer,
                 $stmt->args,
@@ -140,21 +145,21 @@ class MissingMethodCallHandler
             );
 
             if ($class_storage->sealed_methods || $config->seal_all_methods) {
-                $result->non_existent_magic_method_ids[] = $method_id;
+                $result->non_existent_magic_method_ids[] = $method_id->__toString();
 
                 return null;
             }
         }
 
         $result->has_valid_method_call_type = true;
-        $result->existent_method_ids[] = $method_id;
+        $result->existent_method_ids[] = $method_id->__toString();
 
         $array_values = array_map(
             /**
              * @return PhpParser\Node\Expr\ArrayItem
              */
             function (PhpParser\Node\Arg $arg): PhpParser\Node\Expr\ArrayItem {
-                return new PhpParser\Node\Expr\ArrayItem(
+                return new VirtualArrayItem(
                     $arg->value,
                     null,
                     false,
@@ -164,20 +169,19 @@ class MissingMethodCallHandler
             $stmt->args
         );
 
-        $old_node_data = $statements_analyzer->node_data;
         $statements_analyzer->node_data = clone $statements_analyzer->node_data;
 
         return new AtomicCallContext(
             new MethodIdentifier($fq_class_name, '__call'),
             [
-                new PhpParser\Node\Arg(
-                    new PhpParser\Node\Scalar\String_($method_name_lc),
+                new VirtualArg(
+                    new VirtualString($method_name_lc),
                     false,
                     false,
                     $stmt->getAttributes()
                 ),
-                new PhpParser\Node\Arg(
-                    new PhpParser\Node\Expr\Array_(
+                new VirtualArg(
+                    new VirtualArray(
                         $array_values,
                         $stmt->getAttributes()
                     ),
@@ -185,8 +189,7 @@ class MissingMethodCallHandler
                     false,
                     $stmt->getAttributes()
                 ),
-            ],
-            $old_node_data
+            ]
         );
     }
 
@@ -216,7 +219,7 @@ class MissingMethodCallHandler
             && isset($class_storage->pseudo_methods[$method_name_lc])
         ) {
             $result->has_valid_method_call_type = true;
-            $result->existent_method_ids[] = $method_id;
+            $result->existent_method_ids[] = $method_id->__toString();
 
             $pseudo_method_storage = $class_storage->pseudo_methods[$method_name_lc];
 

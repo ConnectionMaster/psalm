@@ -1,9 +1,10 @@
 <?php
 namespace Psalm\Tests;
 
-use const DIRECTORY_SEPARATOR;
 use Psalm\Config;
 use Psalm\Context;
+
+use const DIRECTORY_SEPARATOR;
 
 class PropertyTypeTest extends TestCase
 {
@@ -109,6 +110,38 @@ class PropertyTypeTest extends TestCase
 
                     if ($x->x === null) {}
                 }'
+        );
+
+        $this->analyzeFile('somefile.php', new Context());
+    }
+
+    public function testFooBar(): void
+    {
+        Config::getInstance()->remember_property_assignments_after_call = false;
+
+        $this->addFile(
+            'somefile.php',
+            '<?php
+                    class A {
+                        private ?int $bar = null;
+
+                        public function baz(): void
+                        {
+                            $this->bar = null;
+
+                            foreach (range(1, 5) as $part) {
+                                if ($part === 3) {
+                                    $this->foo();
+                                }
+                            }
+
+                            if ($this->bar === null) {}
+                        }
+
+                        private function foo() : void {
+                            $this->bar = 5;
+                        }
+                    }'
         );
 
         $this->analyzeFile('somefile.php', new Context());
@@ -920,13 +953,13 @@ class PropertyTypeTest extends TestCase
 
                     class Finally_ extends Node\Stmt
                     {
-                        /** @var Node[] Statements */
+                        /** @var list<Node\Stmt> Statements */
                         public $stmts;
 
                         /**
                          * Constructs a finally node.
                          *
-                         * @param array<int, Node\Stmt> $stmts      Statements
+                         * @param list<Node\Stmt> $stmts      Statements
                          * @param array  $attributes Additional attributes
                          */
                         public function __construct(array $stmts = array(), array $attributes = array()) {
@@ -1237,11 +1270,9 @@ class PropertyTypeTest extends TestCase
                         public function bar() : void {}
                     }
 
-                    $a = new A();
-
-                    if ($a->instance) {
-                        $a->instance->bar();
-                        echo $a->instance->bat;
+                    if (A::$instance) {
+                        A::$instance->bar();
+                        echo A::$instance->bat;
                     }',
             ],
             'nonStaticPropertyMethodCall' => [
@@ -1724,34 +1755,6 @@ class PropertyTypeTest extends TestCase
 
                     class Bar extends Foo {}',
             ],
-            'parentSetsWiderTypeInConstructor' => [
-                '<?php
-                    interface Foo {}
-
-                    interface FooMore extends Foo {
-                        public function something(): void;
-                    }
-
-                    class Bar {
-                        /** @var Foo */
-                        protected $foo;
-
-                        public function __construct(Foo $foo) {
-                            $this->foo = $foo;
-                        }
-                    }
-
-
-                    class BarMore extends Bar {
-                        /** @var FooMore */
-                        protected $foo;
-
-                        public function __construct(FooMore $foo) {
-                            parent::__construct($foo);
-                            $this->foo->something();
-                        }
-                    }',
-            ],
             'inferPropertyTypesForSimpleConstructors' => [
                 '<?php
                     class A {
@@ -1819,73 +1822,11 @@ class PropertyTypeTest extends TestCase
                     class EntityTags {
                         private $tags;
 
+                        /** @no-named-arguments */
                         public function __construct(Tag ...$tags) {
                             $this->tags = $tags;
                         }
                     }',
-            ],
-            'readonlyPropertySetInConstructor' => [
-                '<?php
-                    class A {
-                        /**
-                         * @readonly
-                         */
-                        public string $bar;
-
-                        public function __construct() {
-                            $this->bar = "hello";
-                        }
-                    }
-
-                    echo (new A)->bar;'
-            ],
-            'readonlyWithPrivateMutationsAllowedPropertySetInAnotherMEthod' => [
-                '<?php
-                    class A {
-                        /**
-                         * @readonly
-                         * @psalm-allow-private-mutation
-                         */
-                        public ?string $bar = null;
-
-                        public function setBar(string $s) : void {
-                            $this->bar = $s;
-                        }
-                    }
-
-                    echo (new A)->bar;'
-            ],
-            'readonlyPublicPropertySetInAnotherMEthod' => [
-                '<?php
-                    class A {
-                        /**
-                         * @psalm-readonly-allow-private-mutation
-                         */
-                        public ?string $bar = null;
-
-                        public function setBar(string $s) : void {
-                            $this->bar = $s;
-                        }
-                    }
-
-                    echo (new A)->bar;'
-            ],
-            'readonlyPropertySetChildClass' => [
-                '<?php
-                    abstract class A {
-                        /**
-                         * @readonly
-                         */
-                        public string $bar;
-                    }
-
-                    class B extends A {
-                        public function __construct() {
-                            $this->bar = "hello";
-                        }
-                    }
-
-                    echo (new B)->bar;'
             ],
             'staticPropertyDefaultWithStaticType' => [
                 '<?php
@@ -2392,14 +2333,144 @@ class PropertyTypeTest extends TestCase
                     }
 
                     function takesFoo(?Foo $foo, string $b) : void {
+                        /** @psalm-suppress MixedArgument */
                         echo $foo->{$b} ?? null;
                     }'
+            ],
+            'nullCoalesceWithNullablePropertyAccess' => [
+                '<?php
+                    class Bar {
+                        public ?string $a = null;
+                    }
+
+                    function takesBar(?Bar $bar) : string {
+                        return $bar?->a ?? "default";
+                    }',
+                [],
+                [],
+                '8.0'
+            ],
+            'possiblyNullOnFunctionCallCoalesced' => [
+                '<?php
+                    class Foo
+                    {
+                        /** @var int */
+                        public $a = 0;
+                    }
+
+                    function accessOnVar(?Foo $bar, string $b) : void {
+                        /** @psalm-suppress MixedArgument */
+                        echo $bar->{$b} ?? null;
+                    }',
+            ],
+            'dontMemoizeConditionalAssignment' => [
+                '<?php
+                    class A {}
+
+                    class B {
+                        protected ?A $a = null;
+
+                        public function test(): void {
+                            if (!$this->a) {
+                                $this->mayBeSetA();
+                            }
+                            if ($this->a instanceof A) {
+                            }
+                        }
+
+                        protected function mayBeSetA(): void {
+                            if (mt_rand(0, 1)) {
+                                $this->a = new A();
+                            }
+                        }
+                    }'
+            ],
+            'allowDefaultForTemplatedProperty' => [
+                '<?php
+                    /**
+                     * @template T as string|null
+                     */
+                    abstract class A {
+                        /** @var list<T> */
+                        public $foo = [];
+                    }
+
+                    /**
+                     * @extends A<string>
+                     */
+                    class AChild extends A {
+                        public $foo = ["hello"];
+                    }'
+            ],
+            'allowBuiltinPropertyDocblock' => [
+                '<?php
+                    class FooException extends LogicException {
+                        /** @var int */
+                        protected $code = 404;
+                    }'
+            ],
+            'dontMemoizeFinalMutationFreeInferredMethod' => [
+                '<?php
+                    final class ExecutionMode
+                    {
+                        private bool $isAutoCommitEnabled = true;
+
+                        public function enableAutoCommit(): void
+                        {
+                            $this->isAutoCommitEnabled = true;
+                        }
+
+                        public function disableAutoCommit(): void
+                        {
+                            $this->isAutoCommitEnabled = false;
+                        }
+
+                        public function isAutoCommitEnabled(): bool
+                        {
+                            return $this->isAutoCommitEnabled;
+                        }
+                    }
+
+                    $mode = new ExecutionMode();
+                    $mode->disableAutoCommit();
+                    assert($mode->isAutoCommitEnabled() === false);
+
+                    $mode->enableAutoCommit();
+                    assert($mode->isAutoCommitEnabled() === true);'
+            ],
+            'promotedInheritedPropertyWithDocblock' => [
+                '<?php
+                    abstract class A {
+                        /** @var array */
+                        public array $arr;
+                    }
+
+                    final class B extends A {
+                        /** @param array $arr */
+                        protected function __construct(public array $arr){}
+                    }'
+            ],
+            'nullsafeShortCircuit' => [
+                '<?php
+                    class Foo {
+                        private ?self $nullableSelf = null;
+
+                        public function __construct(private self $self) {}
+
+                        public function doBar(): ?self
+                        {
+                            return $this->nullableSelf?->self->self;
+                        }
+                    }',
+                [],
+                [],
+                '8.0'
             ],
         ];
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {
@@ -3247,32 +3318,6 @@ class PropertyTypeTest extends TestCase
                     }',
                 'error_message' => 'PropertyNotSetInConstructor',
             ],
-            'parentSetsWiderTypeInConstructor' => [
-                '<?php
-                    interface Foo {}
-
-                    interface FooMore extends Foo {}
-
-                    class Bar {
-                        /** @var Foo */
-                        protected $foo;
-
-                        public function __construct(Foo $foo) {
-                            $this->foo = $foo;
-                        }
-                    }
-
-                    class BarMore extends Bar {
-                        /** @var FooMore */
-                        protected $foo;
-
-                        public function __construct(FooMore $foo) {
-                            parent::__construct($foo);
-                            $this->foo->something();
-                        }
-                    }',
-                'error_message' => 'UndefinedInterfaceMethod',
-            ],
             'nullableTypedPropertyNoConstructor' => [
                 '<?php
                     class A {
@@ -3339,104 +3384,6 @@ class PropertyTypeTest extends TestCase
                         public static $test = ["string-key" => 1];
                     }',
                 'error_message' => 'InvalidPropertyAssignmentValue'
-            ],
-            'readonlyPropertySetInConstructorAndAlsoAnotherMethodInsideClass' => [
-                '<?php
-                    class A {
-                        /**
-                         * @readonly
-                         */
-                        public string $bar;
-
-                        public function __construct() {
-                            $this->bar = "hello";
-                        }
-
-                        public function setBar() : void {
-                            $this->bar = "goodbye";
-                        }
-                    }',
-                'error_message' => 'InaccessibleProperty',
-            ],
-            'readonlyPropertySetInConstructorAndAlsoAnotherMethodInSublass' => [
-                '<?php
-                    class A {
-                        /**
-                         * @readonly
-                         */
-                        public string $bar;
-
-                        public function __construct() {
-                            $this->bar = "hello";
-                        }
-                    }
-
-                    class B extends A {
-                        public function setBar() : void {
-                            $this->bar = "hello";
-                        }
-                    }',
-                'error_message' => 'InaccessibleProperty',
-            ],
-            'readonlyPropertySetInConstructorAndAlsoOutsideClass' => [
-                '<?php
-                    class A {
-                        /**
-                         * @readonly
-                         */
-                        public string $bar;
-
-                        public function __construct() {
-                            $this->bar = "hello";
-                        }
-                    }
-
-                    $a = new A();
-                    $a->bar = "goodbye";',
-                'error_message' => 'InaccessibleProperty',
-            ],
-            'readonlyPropertySetInConstructorAndAlsoOutsideClassWithAllowPrivate' => [
-                '<?php
-                    class A {
-                        /**
-                         * @readonly
-                         * @psalm-allow-private-mutation
-                         */
-                        public string $bar;
-
-                        public function __construct() {
-                            $this->bar = "hello";
-                        }
-
-                        public function setAgain() : void {
-                            $this->bar = "hello";
-                        }
-                    }
-
-                    $a = new A();
-                    $a->bar = "goodbye";',
-                'error_message' => 'InaccessibleProperty - src' . DIRECTORY_SEPARATOR . 'somefile.php:19:21',
-            ],
-            'readonlyPublicPropertySetInConstructorAndAlsoOutsideClass' => [
-                '<?php
-                    class A {
-                        /**
-                         * @psalm-readonly-allow-private-mutation
-                         */
-                        public string $bar;
-
-                        public function __construct() {
-                            $this->bar = "hello";
-                        }
-
-                        public function setAgain() : void {
-                            $this->bar = "hello";
-                        }
-                    }
-
-                    $a = new A();
-                    $a->bar = "goodbye";',
-                'error_message' => 'InaccessibleProperty - src' . DIRECTORY_SEPARATOR . 'somefile.php:18:21',
             ],
             'addNullToMixedAfterNullablePropertyFetch' => [
                 '<?php
@@ -3552,6 +3499,79 @@ class PropertyTypeTest extends TestCase
                     }',
                 'error_message' => 'MismatchingDocblockPropertyType',
             ],
+            'possiblyNullOnFunctionCallNotCoalesced' => [
+                '<?php
+                    function getC() : ?C {
+                        return rand(0, 1) ? new C() : null;
+                    }
+
+                    function foo() : void {
+                        echo getC()->id;
+                    }
+
+                    class C {
+                        public int $id = 1;
+                    }',
+                'error_message' => 'PossiblyNullPropertyFetch',
+            ],
+            'noCrashWhenCallingMagicSet' => [
+                '<?php
+                    class A {
+                        public function __set(string $s, mixed $value) : void {}
+                    }
+
+                    (new A)->__set("foo");',
+                'error_message' => 'TooFewArguments',
+            ],
+            'noCrashWhenCallingMagicGet' => [
+                '<?php
+                    class A {
+                        public function __get(string $s) : mixed {}
+                    }
+
+                    (new A)->__get();',
+                'error_message' => 'TooFewArguments',
+            ],
+            'staticReadOfNonStaticProperty' => [
+                '<?php
+                    class A {
+                        /** @var int */
+                        public $prop = 1;
+                    }
+                    echo A::$prop;
+                ',
+                'error_message' => 'UndefinedPropertyFetch',
+            ],
+            'staticWriteToNonStaticProperty' => [
+                '<?php
+                    class A {
+                        /** @var int */
+                        public $prop = 1;
+                    }
+                    A::$prop = 42;
+                ',
+                'error_message' => 'UndefinedPropertyAssignment',
+            ],
+            'nonStaticReadOfStaticProperty' => [
+                '<?php
+                    class A {
+                        /** @var int */
+                        public static $prop = 1;
+                    }
+                    echo (new A)->prop;
+                ',
+                'error_message' => 'UndefinedPropertyFetch',
+            ],
+            'nonStaticWriteToStaticProperty' => [
+                '<?php
+                    class A {
+                        /** @var int */
+                        public static $prop = 1;
+                    }
+                    (new A)->prop = 42;
+                ',
+                'error_message' => 'UndefinedPropertyAssignment',
+            ]
         ];
     }
 }

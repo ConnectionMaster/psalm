@@ -5,6 +5,7 @@ use Psalm\Config;
 use Psalm\Context;
 use Psalm\Internal\IncludeCollector;
 use Psalm\Tests\Internal\Provider;
+
 use function dirname;
 use function getcwd;
 
@@ -42,7 +43,7 @@ class VariadicTest extends TestCase
                 dirname(__DIR__),
                 '<?xml version="1.0"?>
                 <psalm
-                    autoloader="tests/fixtures/stubs/custom_functions.php"
+                    autoloader="tests/fixtures/stubs/custom_functions.phpstub"
                 >
                     <projectFiles>
                         <directory name="src" />
@@ -98,7 +99,7 @@ class VariadicTest extends TestCase
                 '<?php
                     /**
                      * @param int ...$a_list
-                     * @return array<int, int>
+                     * @return array<array-key, int>
                      */
                     function f(int ...$a_list) {
                         return array_map(

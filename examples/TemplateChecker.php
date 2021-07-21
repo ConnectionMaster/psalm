@@ -6,11 +6,14 @@ use Psalm;
 use Psalm\Codebase;
 use Psalm\Internal\Analyzer\ClassAnalyzer;
 use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
+use Psalm\Internal\Analyzer\ClassLikeNameOptions;
 use Psalm\Internal\Analyzer\MethodAnalyzer;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\CodeLocation;
 use Psalm\Context;
 use Psalm\DocComment;
+use Psalm\Node\Stmt\VirtualClass;
+use Psalm\Node\Stmt\VirtualClassMethod;
 use Psalm\Storage\MethodStorage;
 use Psalm\Type;
 
@@ -84,7 +87,7 @@ class TemplateAnalyzer extends Psalm\Internal\Analyzer\FileAnalyzer
             null,
             null,
             [],
-            true
+            new ClassLikeNameOptions(true)
         ) === false
         ) {
             return false;
@@ -147,9 +150,9 @@ class TemplateAnalyzer extends Psalm\Internal\Analyzer\FileAnalyzer
 
         $pseudo_method_name = preg_replace('/[^a-zA-Z0-9_]+/', '_', $this->file_name);
 
-        $class_method = new PhpParser\Node\Stmt\ClassMethod($pseudo_method_name, ['stmts' => []]);
+        $class_method = new VirtualClassMethod($pseudo_method_name, ['stmts' => []]);
 
-        $class = new PhpParser\Node\Stmt\Class_(self::VIEW_CLASS);
+        $class = new VirtualClass(self::VIEW_CLASS);
 
         $class_analyzer = new ClassAnalyzer($class, $this, self::VIEW_CLASS);
 

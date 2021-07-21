@@ -11,13 +11,11 @@ class IssueData
 
     /**
      * @var int
-     * @readonly
      */
     public $line_from;
 
     /**
      * @var int
-     * @readonly
      */
     public $line_to;
 
@@ -59,25 +57,21 @@ class IssueData
 
     /**
      * @var int
-     * @readonly
      */
     public $from;
 
     /**
      * @var int
-     * @readonly
      */
     public $to;
 
     /**
      * @var int
-     * @readonly
      */
     public $snippet_from;
 
     /**
      * @var int
-     * @readonly
      */
     public $snippet_to;
 
@@ -116,6 +110,11 @@ class IssueData
     public $taint_trace;
 
     /**
+     * @var ?list<DataFlowNodeData>
+     */
+    public $other_references;
+
+    /**
      * @var ?string
      * @readonly
      */
@@ -123,6 +122,7 @@ class IssueData
 
     /**
      * @param ?list<DataFlowNodeData|array{label: string, entry_path_type: string}> $taint_trace
+     * @param ?list<DataFlowNodeData> $other_references
      */
     public function __construct(
         string $severity,
@@ -143,6 +143,7 @@ class IssueData
         int $shortcode = 0,
         int $error_level = -1,
         ?array $taint_trace = null,
+        array $other_references = null,
         ?string $dupe_key = null
     ) {
         $this->severity = $severity;
@@ -164,6 +165,7 @@ class IssueData
         $this->error_level = $error_level;
         $this->link = $shortcode ? 'https://psalm.dev/' . \str_pad((string) $shortcode, 3, "0", \STR_PAD_LEFT) : '';
         $this->taint_trace = $taint_trace;
+        $this->other_references = $other_references;
         $this->dupe_key = $dupe_key;
     }
 }

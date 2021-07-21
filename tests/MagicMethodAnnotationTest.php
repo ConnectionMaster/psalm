@@ -1,9 +1,10 @@
 <?php
 namespace Psalm\Tests;
 
-use const DIRECTORY_SEPARATOR;
 use Psalm\Config;
 use Psalm\Context;
+
+use const DIRECTORY_SEPARATOR;
 
 class MagicMethodAnnotationTest extends TestCase
 {
@@ -702,6 +703,34 @@ class MagicMethodAnnotationTest extends TestCase
                         (new \Foo\G)->randomInt();
                     }'
             ],
+            'negativeInDefault' => [
+                '<?php
+                    /**
+                     * @method void foo($a = -0.1, $b = -12)
+                     */
+                    class G
+                    {
+                        public function __call(string $method, array $attributes): void
+                        {
+                        }
+                    }
+                    (new G)->foo();'
+            ],
+            'namespacedNegativeInDefault' => [
+                '<?php
+                    namespace Foo {
+                        /**
+                         * @method void foo($a = -0.1, $b = -12)
+                         */
+                        class G
+                        {
+                            public function __call(string $method, array $attributes): void
+                            {
+                            }
+                        }
+                        (new G)->foo();
+                    }'
+            ],
             'namespacedUnion' => [
                 '<?php
                     namespace Foo;
@@ -721,7 +750,7 @@ class MagicMethodAnnotationTest extends TestCase
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {
@@ -1009,6 +1038,55 @@ class MagicMethodAnnotationTest extends TestCase
               '
         );
 
+        $this->analyzeFile('somefile.php', new Context());
+    }
+
+    public function testIntersectionTypeWhenMagicMethodDoesNotExistButIsProvidedBySecondType(): void
+    {
+        $this->addFile(
+            'somefile.php',
+            '<?php
+              /** @method foo(): int */
+              class A {
+                public function __call(string $method, array $args) {}
+              }
+
+              class B {
+                public function otherMethod(): void {}
+              }
+
+              /** @var A & B $b */
+              $b = new B();
+              $b->otherMethod();
+              '
+        );
+
+        $this->analyzeFile('somefile.php', new Context());
+    }
+
+    public function testIntersectionTypeWhenMethodDoesNotExistOnEither(): void
+    {
+        $this->addFile(
+            'somefile.php',
+            '<?php
+              /** @method foo(): int */
+              class A {
+                public function __call(string $method, array $args) {}
+              }
+
+              class B {
+                public function otherMethod(): void {}
+              }
+
+              /** @var A & B $b */
+              $b = new B();
+              $b->nonExistantMethod();
+              '
+        );
+
+        $error_message = 'UndefinedMagicMethod';
+        $this->expectException(\Psalm\Exception\CodeException::class);
+        $this->expectExceptionMessage($error_message);
         $this->analyzeFile('somefile.php', new Context());
     }
 }

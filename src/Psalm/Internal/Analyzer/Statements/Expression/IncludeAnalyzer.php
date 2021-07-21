@@ -2,37 +2,40 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression;
 
 use PhpParser;
-use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
-use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Internal\DataFlow\TaintSink;
-use Psalm\Internal\Codebase\TaintFlowGraph;
 use Psalm\CodeLocation;
 use Psalm\Config;
 use Psalm\Context;
 use Psalm\Exception\FileIncludeException;
+use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
+use Psalm\Internal\Analyzer\StatementsAnalyzer;
+use Psalm\Internal\Codebase\TaintFlowGraph;
+use Psalm\Internal\DataFlow\TaintSink;
 use Psalm\Issue\MissingFile;
 use Psalm\Issue\UnresolvableInclude;
 use Psalm\IssueBuffer;
-use function str_replace;
-use const DIRECTORY_SEPARATOR;
-use function dirname;
-use function preg_match;
-use function in_array;
-use function realpath;
-use function get_included_files;
-use function str_repeat;
-use const PHP_EOL;
-use function is_string;
-use function implode;
-use function defined;
+use Psalm\Plugin\EventHandler\Event\AddRemoveTaintsEvent;
+
 use function constant;
-use const PATH_SEPARATOR;
-use function preg_split;
-use function get_include_path;
+use function defined;
+use function dirname;
 use function explode;
-use function substr;
 use function file_exists;
+use function get_include_path;
+use function get_included_files;
+use function implode;
+use function in_array;
+use function is_string;
+use function preg_match;
 use function preg_replace;
+use function preg_split;
+use function realpath;
+use function str_repeat;
+use function str_replace;
+use function substr;
+
+use const DIRECTORY_SEPARATOR;
+use const PATH_SEPARATOR;
+use const PHP_EOL;
 
 /**
  * @internal
@@ -113,6 +116,7 @@ class IncludeAnalyzer
                 'include',
                 'include',
                 0,
+                $arg_location,
                 $arg_location
             );
 
@@ -120,8 +124,20 @@ class IncludeAnalyzer
 
             $statements_analyzer->data_flow_graph->addSink($include_param_sink);
 
+            $codebase = $statements_analyzer->getCodebase();
+            $event = new AddRemoveTaintsEvent($stmt, $context, $statements_analyzer, $codebase);
+
+            $added_taints = $codebase->config->eventDispatcher->dispatchAddTaints($event);
+            $removed_taints = $codebase->config->eventDispatcher->dispatchRemoveTaints($event);
+
             foreach ($stmt_expr_type->parent_nodes as $parent_node) {
-                $statements_analyzer->data_flow_graph->addPath($parent_node, $include_param_sink, 'arg');
+                $statements_analyzer->data_flow_graph->addPath(
+                    $parent_node,
+                    $include_param_sink,
+                    'arg',
+                    $added_taints,
+                    $removed_taints
+                );
             }
         }
 

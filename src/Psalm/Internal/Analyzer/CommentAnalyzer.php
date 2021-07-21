@@ -8,24 +8,25 @@ use Psalm\Exception\DocblockParseException;
 use Psalm\Exception\IncorrectDocblockException;
 use Psalm\Exception\TypeParseTreeException;
 use Psalm\FileSource;
-use Psalm\Internal\Scanner\VarDocblockComment;
 use Psalm\Internal\Scanner\ParsedDocblock;
-use Psalm\Type;
+use Psalm\Internal\Scanner\VarDocblockComment;
 use Psalm\Internal\Type\TypeAlias;
 use Psalm\Internal\Type\TypeParser;
 use Psalm\Internal\Type\TypeTokenizer;
-use function trim;
-use function substr_count;
-use function strlen;
-use function preg_replace;
-use function str_replace;
-use function preg_match;
-use function count;
-use function reset;
-use function preg_split;
-use function substr;
+use Psalm\Type;
+
 use function array_merge;
+use function count;
+use function preg_match;
+use function preg_replace;
+use function preg_split;
+use function reset;
 use function rtrim;
+use function str_replace;
+use function strlen;
+use function substr;
+use function substr_count;
+use function trim;
 
 /**
  * @internal
@@ -102,6 +103,7 @@ class CommentAnalyzer
                 $line_parts = self::splitDocLine($var_line);
 
                 $line_number = $comment->getStartLine() + substr_count($comment_text, "\n", 0, $offset);
+                $description = $parsed_docblock->description;
 
                 if ($line_parts && $line_parts[0]) {
                     $type_start = $offset + $comment->getStartFilePos();
@@ -131,8 +133,14 @@ class CommentAnalyzer
 
                     $var_line_number = $line_number;
 
-                    if (count($line_parts) > 1 && $line_parts[1][0] === '$') {
-                        $var_id = $line_parts[1];
+                    if (count($line_parts) > 1) {
+                        if ($line_parts[1][0] === '$') {
+                            $var_id = $line_parts[1];
+                            $description = trim(substr($var_line, strlen($line_parts[0]) + strlen($line_parts[1]) + 2));
+                        } else {
+                            $description = trim(substr($var_line, strlen($line_parts[0]) + 1));
+                        }
+                        $description = preg_replace('/\\n \\*\\s+/um', ' ', $description);
                     }
                 }
 
@@ -163,11 +171,11 @@ class CommentAnalyzer
 
                 $var_comment = new VarDocblockComment();
                 $var_comment->type = $defined_type;
-                $var_comment->original_type = $original_type;
                 $var_comment->var_id = $var_id;
                 $var_comment->line_number = $var_line_number;
                 $var_comment->type_start = $type_start;
                 $var_comment->type_end = $type_end;
+                $var_comment->description = $description;
 
                 self::decorateVarDocblockComment($var_comment, $parsed_docblock);
 
@@ -182,7 +190,8 @@ class CommentAnalyzer
                 || isset($parsed_docblock->tags['psalm-readonly'])
                 || isset($parsed_docblock->tags['psalm-readonly-allow-private-mutation'])
                 || isset($parsed_docblock->tags['psalm-taint-escape'])
-                || isset($parsed_docblock->tags['psalm-internal']))
+                || isset($parsed_docblock->tags['psalm-internal'])
+                || $parsed_docblock->description)
         ) {
             $var_comment = new VarDocblockComment();
 
@@ -208,6 +217,10 @@ class CommentAnalyzer
             = isset($parsed_docblock->tags['psalm-allow-private-mutation'])
             || isset($parsed_docblock->tags['psalm-readonly-allow-private-mutation']);
 
+        if (!$var_comment->description) {
+            $var_comment->description = $parsed_docblock->description;
+        }
+
         if (isset($parsed_docblock->tags['psalm-taint-escape'])) {
             foreach ($parsed_docblock->tags['psalm-taint-escape'] as $param) {
                 $param = trim($param);
@@ -225,6 +238,10 @@ class CommentAnalyzer
             $var_comment->psalm_internal = reset($parsed_docblock->tags['psalm-internal']);
             $var_comment->internal = true;
         }
+
+        if (isset($parsed_docblock->tags['psalm-suppress'])) {
+            $var_comment->suppressed_issues = $parsed_docblock->tags['psalm-suppress'];
+        }
     }
 
     /**
@@ -240,7 +257,7 @@ class CommentAnalyzer
     /**
      * @throws DocblockParseException if an invalid string is found
      *
-     * @return list<string>
+     * @return non-empty-list<string>
      *
      * @psalm-pure
      */
@@ -263,7 +280,7 @@ class CommentAnalyzer
             $last_char = $i > 0 ? $return_block[$i - 1] : null;
 
             if ($quote_char) {
-                if ($char === $quote_char && $i > 1 && !$escaped) {
+                if ($char === $quote_char && !$escaped) {
                     $quote_char = null;
 
                     $type .= $char;

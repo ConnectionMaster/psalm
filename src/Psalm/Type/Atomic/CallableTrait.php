@@ -1,22 +1,23 @@
 <?php
 namespace Psalm\Type\Atomic;
 
-use function array_map;
-use function count;
-use function implode;
 use Psalm\Codebase;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
+use Psalm\Internal\Type\TemplateInferredTypeReplacer;
 use Psalm\Internal\Type\TemplateResult;
 use Psalm\Internal\Type\TemplateStandinTypeReplacer;
-use Psalm\Internal\Type\TemplateInferredTypeReplacer;
 use Psalm\Storage\FunctionLikeParameter;
 use Psalm\Type\Atomic;
 use Psalm\Type\Union;
 
+use function array_map;
+use function count;
+use function implode;
+
 trait CallableTrait
 {
     /**
-     * @var array<int, FunctionLikeParameter>|null
+     * @var list<FunctionLikeParameter>|null
      */
     public $params = [];
 
@@ -33,7 +34,7 @@ trait CallableTrait
     /**
      * Constructs a new instance of a generic type
      *
-     * @param array<int, FunctionLikeParameter> $params
+     * @param list<FunctionLikeParameter> $params
      */
     public function __construct(
         string $value = 'callable',
@@ -187,7 +188,7 @@ trait CallableTrait
         ?string $calling_class = null,
         ?string $calling_function = null,
         bool $replace = true,
-        bool $add_upper_bound = false,
+        bool $add_lower_bound = false,
         int $depth = 0
     ) : Atomic {
         $callable = clone $this;
@@ -216,27 +217,27 @@ trait CallableTrait
                     $calling_class,
                     $calling_function,
                     $replace,
-                    !$add_upper_bound,
+                    !$add_lower_bound,
+                    null,
                     $depth
                 );
             }
         }
 
-        if (($input_type instanceof Atomic\TCallable || $input_type instanceof Atomic\TClosure)
-            && $callable->return_type
-            && $input_type->return_type
-        ) {
+        if ($callable->return_type) {
             $callable->return_type = TemplateStandinTypeReplacer::replace(
                 $callable->return_type,
                 $template_result,
                 $codebase,
                 $statements_analyzer,
-                $input_type->return_type,
+                $input_type instanceof Atomic\TCallable || $input_type instanceof Atomic\TClosure
+                    ? $input_type->return_type
+                    : null,
                 $input_arg_offset,
                 $calling_class,
                 $calling_function,
                 $replace,
-                $add_upper_bound
+                $add_lower_bound
             );
         }
 

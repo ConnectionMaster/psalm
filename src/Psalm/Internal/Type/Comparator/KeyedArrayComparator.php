@@ -5,8 +5,9 @@ namespace Psalm\Internal\Type\Comparator;
 use Psalm\Codebase;
 use Psalm\Type;
 use Psalm\Type\Atomic\TKeyedArray;
-use Psalm\Type\Atomic\TObjectWithProperties;
 use Psalm\Type\Atomic\TNamedObject;
+use Psalm\Type\Atomic\TObjectWithProperties;
+
 use function is_string;
 
 /**
@@ -40,8 +41,8 @@ class KeyedArrayComparator
 
             $property_type_comparison = new TypeComparisonResult();
 
-            if (!$input_property_type->isEmpty()
-                && !UnionTypeComparator::isContainedBy(
+            if (!$input_property_type->isEmpty()) {
+                if (!UnionTypeComparator::isContainedBy(
                     $codebase,
                     $input_property_type,
                     $container_property_type,
@@ -50,39 +51,37 @@ class KeyedArrayComparator
                     $property_type_comparison,
                     $allow_interface_equality
                 )
-                && !$property_type_comparison->type_coerced_from_scalar
-            ) {
-                $inverse_property_type_comparison = new TypeComparisonResult();
+                    && !$property_type_comparison->type_coerced_from_scalar
+                ) {
+                    $inverse_property_type_comparison = new TypeComparisonResult();
 
-                if ($atomic_comparison_result) {
-                    if (UnionTypeComparator::isContainedBy(
-                        $codebase,
-                        $container_property_type,
-                        $input_property_type,
-                        false,
-                        false,
-                        $inverse_property_type_comparison,
-                        $allow_interface_equality
-                    )
-                    || $inverse_property_type_comparison->type_coerced_from_scalar
-                    ) {
-                        $atomic_comparison_result->type_coerced = true;
+                    if ($atomic_comparison_result) {
+                        if (UnionTypeComparator::isContainedBy(
+                            $codebase,
+                            $container_property_type,
+                            $input_property_type,
+                            false,
+                            false,
+                            $inverse_property_type_comparison,
+                            $allow_interface_equality
+                        )
+                        || $inverse_property_type_comparison->type_coerced_from_scalar
+                        ) {
+                            $atomic_comparison_result->type_coerced = true;
+                        }
+                    }
+
+                    $all_types_contain = false;
+                } else {
+                    if ($atomic_comparison_result) {
+                        $atomic_comparison_result->to_string_cast
+                            = $atomic_comparison_result->to_string_cast === true
+                                || $property_type_comparison->to_string_cast === true;
                     }
                 }
-
-                $all_types_contain = false;
             }
         }
-
-        if ($all_types_contain) {
-            if ($atomic_comparison_result) {
-                $atomic_comparison_result->to_string_cast = false;
-            }
-
-            return true;
-        }
-
-        return false;
+        return $all_types_contain;
     }
 
     public static function isContainedByObjectWithProperties(

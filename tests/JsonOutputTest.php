@@ -3,9 +3,11 @@ namespace Psalm\Tests;
 
 use Psalm\Context;
 use Psalm\Internal\Analyzer\ProjectAnalyzer;
+use Psalm\Internal\Provider\FakeFileProvider;
 use Psalm\Internal\RuntimeCaches;
 use Psalm\IssueBuffer;
 use Psalm\Tests\Internal\Provider;
+
 use function substr;
 
 class JsonOutputTest extends TestCase
@@ -15,7 +17,7 @@ class JsonOutputTest extends TestCase
         // `TestCase::setUp()` creates its own ProjectAnalyzer and Config instance, but we don't want to do that in this
         // case, so don't run a `parent::setUp()` call here.
         RuntimeCaches::clearAll();
-        $this->file_provider = new Provider\FakeFileProvider();
+        $this->file_provider = new FakeFileProvider();
 
         $config = new TestConfig();
         $config->throw_exception = false;
@@ -89,7 +91,7 @@ class JsonOutputTest extends TestCase
                     function fooFoo(Badger\Bodger $a): Badger\Bodger {
                         return $a;
                     }',
-                'message' => 'Class or interface Badger\\Bodger does not exist',
+                'message' => 'Class, interface or enum named Badger\\Bodger does not exist',
                 'line' => 2,
                 'error' => 'Badger\\Bodger',
             ],
@@ -98,7 +100,7 @@ class JsonOutputTest extends TestCase
                     function fooFoo() {
                         return "hello";
                     }',
-                'message' => 'Method fooFoo does not have a return type, expecting string(hello)',
+                'message' => 'Method fooFoo does not have a return type, expecting "hello"',
                 'line' => 2,
                 'error' => 'fooFoo',
             ],
@@ -110,7 +112,7 @@ class JsonOutputTest extends TestCase
                     function fooFoo() {
                         return "hello";
                     }',
-                'message' => "The inferred type 'string(hello)' does not match the declared return type 'int' for fooFoo",
+                'message' => "The inferred type '\"hello\"' does not match the declared return type 'int' for fooFoo",
                 'line' => 6,
                 'error' => '"hello"',
             ],

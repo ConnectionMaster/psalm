@@ -3,6 +3,7 @@ namespace Psalm\Tests;
 
 use Psalm\Config;
 use Psalm\Context;
+
 use const DIRECTORY_SEPARATOR;
 
 class MagicPropertyTest extends TestCase
@@ -694,11 +695,43 @@ class MagicPropertyTest extends TestCase
                         }
                     }'
             ],
+            'propertyReadIsExpanded' => [
+                '<?php
+                    /** @property self::TYPE_* $type */
+                    class A {
+                        public const TYPE_A = 1;
+                        public const TYPE_B = 2;
+
+                        public function __get(string $_prop) {}
+                        /** @param mixed $_value */
+                        public function __set(string $_prop, $_value) {}
+                    }
+                    $a = (new A)->type;
+                ',
+                'assertions' => [
+                    '$a===' => '1|2',
+                ],
+            ],
+            'propertyWriteIsExpanded' => [
+                '<?php
+                    /** @property self::TYPE_* $type */
+                    class A {
+                        public const TYPE_A = 1;
+                        public const TYPE_B = 2;
+
+                        public function __get(string $_prop) {}
+                        /** @param mixed $_value */
+                        public function __set(string $_prop, $_value) {}
+                    }
+                    $a = (new A);
+                    $a->type = A::TYPE_B;
+                ',
+            ],
         ];
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {

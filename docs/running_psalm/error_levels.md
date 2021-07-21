@@ -4,6 +4,9 @@ You can run Psalm in at different levels of strictness from 1 to 8.
 
 Level 1 is the most strict, level 8 is the most lenient.
 
+When no level is explicitly defined, psalm defaults to level 2.
+In case `totallyTyped` is enabled, psalm defaults to level 1.
+
 Some issues are [always treated as errors](#always-treated-as-errors). These are issues with a very low probability of false-positives.
 
 At [level 1](#errors-that-only-appear-at-level-1) all issues (except those emitted for opt-in features) that Psalm can find are treated as errors. Those issues include any situation where Psalm cannot infer the type of a given expression.
@@ -21,6 +24,7 @@ Level 5 and above allows a more non-verifiable code, and higher levels are even 
  - [AbstractMethodCall](issues/AbstractMethodCall.md)
  - [ComplexFunction](issues/ComplexFunction.md)
  - [ComplexMethod](issues/ComplexMethod.md)
+ - [ConfigIssue](issues/ConfigIssue.md)
  - [DuplicateArrayKey](issues/DuplicateArrayKey.md)
  - [DuplicateClass](issues/DuplicateClass.md)
  - [DuplicateFunction](issues/DuplicateFunction.md)
@@ -306,6 +310,7 @@ These issues are treated as errors at level 7 and below.
  - [UnusedClass](issues/UnusedClass.md)
  - [UnusedClosureParam](issues/UnusedClosureParam.md)
  - [UnusedConstructor](issues/UnusedConstructor.md)
+ - [UnusedForeachValue](issues/UnusedForeachValue.md)
  - [UnusedMethod](issues/UnusedMethod.md)
  - [UnusedParam](issues/UnusedParam.md)
  - [UnusedProperty](issues/UnusedProperty.md)

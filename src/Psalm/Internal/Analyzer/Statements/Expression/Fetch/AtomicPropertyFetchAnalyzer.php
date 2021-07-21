@@ -2,18 +2,21 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression\Fetch;
 
 use PhpParser;
+use Psalm\CodeLocation;
 use Psalm\Config;
+use Psalm\Context;
 use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
 use Psalm\Internal\Analyzer\NamespaceAnalyzer;
-use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\Assignment\InstancePropertyAssignmentAnalyzer;
 use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
 use Psalm\Internal\Analyzer\Statements\Expression\ExpressionIdentifier;
-use Psalm\Internal\Analyzer\Statements\Expression\Assignment\InstancePropertyAssignmentAnalyzer;
+use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
-use Psalm\Internal\Type\TemplateResult;
+use Psalm\Internal\Codebase\TaintFlowGraph;
+use Psalm\Internal\DataFlow\DataFlowNode;
 use Psalm\Internal\Type\TemplateInferredTypeReplacer;
-use Psalm\CodeLocation;
-use Psalm\Context;
+use Psalm\Internal\Type\TemplateResult;
+use Psalm\Internal\Type\TypeExpander;
 use Psalm\Issue\DeprecatedProperty;
 use Psalm\Issue\ImpurePropertyFetch;
 use Psalm\Issue\InternalProperty;
@@ -25,19 +28,25 @@ use Psalm\Issue\UndefinedMagicPropertyFetch;
 use Psalm\Issue\UndefinedPropertyFetch;
 use Psalm\Issue\UndefinedThisPropertyFetch;
 use Psalm\IssueBuffer;
-use Psalm\Type;
+use Psalm\Node\Expr\VirtualMethodCall;
+use Psalm\Node\Scalar\VirtualString;
+use Psalm\Node\VirtualArg;
+use Psalm\Node\VirtualIdentifier;
+use Psalm\Plugin\EventHandler\Event\AddRemoveTaintsEvent;
 use Psalm\Storage\ClassLikeStorage;
+use Psalm\Type;
 use Psalm\Type\Atomic\TGenericObject;
 use Psalm\Type\Atomic\TNamedObject;
 use Psalm\Type\Atomic\TNull;
 use Psalm\Type\Atomic\TObject;
 use Psalm\Type\Atomic\TObjectWithProperties;
-use function strtolower;
+
+use function array_keys;
 use function array_values;
 use function in_array;
-use function array_keys;
-use Psalm\Internal\DataFlow\DataFlowNode;
-use Psalm\Internal\Codebase\TaintFlowGraph;
+use function is_int;
+use function is_string;
+use function strtolower;
 
 /**
  * @internal
@@ -58,24 +67,11 @@ class AtomicPropertyFetchAnalyzer
         Type\Atomic $lhs_type_part,
         string $prop_name,
         bool &$has_valid_fetch_type,
-        array &$invalid_fetch_types
+        array &$invalid_fetch_types,
+        bool $is_static_access = false
     ) : void {
         if ($lhs_type_part instanceof TNull) {
             return;
-        }
-
-        if ($lhs_type_part instanceof Type\Atomic\TTemplateParam) {
-            $extra_types = $lhs_type_part->extra_types;
-
-            $lhs_type_part = array_values(
-                $lhs_type_part->as->getAtomicTypes()
-            )[0];
-
-            $lhs_type_part->from_docblock = true;
-
-            if ($lhs_type_part instanceof TNamedObject) {
-                $lhs_type_part->extra_types = $extra_types;
-            }
         }
 
         if ($lhs_type_part instanceof Type\Atomic\TMixed) {
@@ -141,7 +137,9 @@ class AtomicPropertyFetchAnalyzer
 
         $codebase = $statements_analyzer->getCodebase();
 
-        if (!$codebase->classExists($lhs_type_part->value)) {
+        if (!$codebase->classExists($lhs_type_part->value)
+            && !$codebase->classlikes->enumExists($lhs_type_part->value)
+        ) {
             $interface_exists = false;
 
             self::handleNonExistentClass(
@@ -164,7 +162,54 @@ class AtomicPropertyFetchAnalyzer
         }
 
         $class_storage = $codebase->classlike_storage_provider->get($fq_class_name);
+
+        $config = $statements_analyzer->getProjectAnalyzer()->getConfig();
+
         $property_id = $fq_class_name . '::$' . $prop_name;
+
+        if ($lhs_type_part instanceof Type\Atomic\TEnumCase) {
+            if ($prop_name !== 'value'
+                || $class_storage->enum_type === null
+                || !$class_storage->enum_cases
+            ) {
+                self::handleNonExistentProperty(
+                    $statements_analyzer,
+                    $codebase,
+                    $stmt,
+                    $context,
+                    $config,
+                    $class_storage,
+                    $prop_name,
+                    $lhs_type_part,
+                    $fq_class_name,
+                    $property_id,
+                    $in_assignment,
+                    $stmt_var_id,
+                    $has_magic_getter,
+                    $var_id
+                );
+            } else {
+                $case_values = [];
+
+                foreach ($class_storage->enum_cases as $enum_case) {
+                    if (is_string($enum_case->value)) {
+                        $case_values[] = new Type\Atomic\TLiteralString($enum_case->value);
+                    } elseif (is_int($enum_case->value)) {
+                        $case_values[] = new Type\Atomic\TLiteralInt($enum_case->value);
+                    } else {
+                        // this should never happen
+                        $case_values[] = new Type\Atomic\TMixed();
+                    }
+                }
+
+                $statements_analyzer->node_data->setType(
+                    $stmt,
+                    new Type\Union($case_values)
+                );
+            }
+
+            return;
+        }
 
         $naive_property_exists = $codebase->properties->propertyExists(
             $property_id,
@@ -253,8 +298,6 @@ class AtomicPropertyFetchAnalyzer
             );
         }
 
-        $config = $statements_analyzer->getProjectAnalyzer()->getConfig();
-
         if (!$naive_property_exists
             && $fq_class_name !== $context->self
             && $context->self
@@ -270,7 +313,13 @@ class AtomicPropertyFetchAnalyzer
             )
         ) {
             $property_id = $context->self . '::$' . $prop_name;
-        } elseif (!$naive_property_exists) {
+        } elseif (!$naive_property_exists
+            || (!$is_static_access
+                // when property existence is asserted by a plugin it doesn't necessarily has storage
+                && $codebase->properties->hasStorage($property_id)
+                && $codebase->properties->getStorage($property_id)->is_static
+            )
+        ) {
             self::handleNonExistentProperty(
                 $statements_analyzer,
                 $codebase,
@@ -303,6 +352,9 @@ class AtomicPropertyFetchAnalyzer
             }
         }
 
+        // FIXME: the following line look superfluous, but removing it makes
+        // Psalm\Tests\PropertyTypeTest::testValidCode with data set "callInParentContext"
+        // fail
         $declaring_property_class = $codebase->properties->getDeclaringClassForProperty(
             $property_id,
             true,
@@ -339,20 +391,9 @@ class AtomicPropertyFetchAnalyzer
         );
 
         if (isset($declaring_class_storage->properties[$prop_name])) {
-            $property_storage = $declaring_class_storage->properties[$prop_name];
+            self::checkPropertyDeprecation($prop_name, $declaring_property_class, $stmt, $statements_analyzer);
 
-            if ($property_storage->deprecated) {
-                if (IssueBuffer::accepts(
-                    new DeprecatedProperty(
-                        $property_id . ' is marked deprecated',
-                        new CodeLocation($statements_analyzer->getSource(), $stmt),
-                        $property_id
-                    ),
-                    $statements_analyzer->getSuppressedIssues()
-                )) {
-                    // fall through
-                }
-            }
+            $property_storage = $declaring_class_storage->properties[$prop_name];
 
             if ($context->self && !NamespaceAnalyzer::isWithin($context->self, $property_storage->internal)) {
                 if (IssueBuffer::accepts(
@@ -422,7 +463,8 @@ class AtomicPropertyFetchAnalyzer
             $class_property_type,
             $property_id,
             $class_storage,
-            $in_assignment
+            $in_assignment,
+            $context
         );
 
         if ($class_storage->mutation_free) {
@@ -436,6 +478,36 @@ class AtomicPropertyFetchAnalyzer
             );
         } else {
             $statements_analyzer->node_data->setType($stmt, $class_property_type);
+        }
+    }
+
+    public static function checkPropertyDeprecation(
+        string $prop_name,
+        string $declaring_property_class,
+        PhpParser\Node\Expr\PropertyFetch $stmt,
+        StatementsAnalyzer $statements_analyzer
+    ): void {
+        $property_id = $declaring_property_class . '::$' . $prop_name;
+        $codebase = $statements_analyzer->getCodebase();
+        $declaring_class_storage = $codebase->classlike_storage_provider->get(
+            $declaring_property_class
+        );
+
+        if (isset($declaring_class_storage->properties[$prop_name])) {
+            $property_storage = $declaring_class_storage->properties[$prop_name];
+
+            if ($property_storage->deprecated) {
+                if (IssueBuffer::accepts(
+                    new DeprecatedProperty(
+                        $property_id . ' is marked deprecated',
+                        new CodeLocation($statements_analyzer->getSource(), $stmt),
+                        $property_id
+                    ),
+                    $statements_analyzer->getSuppressedIssues()
+                )) {
+                    // fall through
+                }
+            }
         }
     }
 
@@ -486,7 +558,13 @@ class AtomicPropertyFetchAnalyzer
             $has_magic_getter = true;
 
             if (isset($class_storage->pseudo_property_get_types['$' . $prop_name])) {
-                $stmt_type = clone $class_storage->pseudo_property_get_types['$' . $prop_name];
+                $stmt_type = TypeExpander::expandUnion(
+                    $codebase,
+                    clone $class_storage->pseudo_property_get_types['$' . $prop_name],
+                    $class_storage->name,
+                    $class_storage->name,
+                    $class_storage->parent_class
+                );
 
                 if ($class_storage->template_types) {
                     if (!$lhs_type_part instanceof TGenericObject) {
@@ -519,7 +597,8 @@ class AtomicPropertyFetchAnalyzer
                     $stmt_type,
                     $property_id,
                     $class_storage,
-                    $in_assignment
+                    $in_assignment,
+                    $context
                 );
 
                 return false;
@@ -531,12 +610,12 @@ class AtomicPropertyFetchAnalyzer
 
             $statements_analyzer->node_data->setType($stmt->var, new Type\Union([$lhs_type_part]));
 
-            $fake_method_call = new PhpParser\Node\Expr\MethodCall(
+            $fake_method_call = new VirtualMethodCall(
                 $stmt->var,
-                new PhpParser\Node\Identifier('__get', $stmt->name->getAttributes()),
+                new VirtualIdentifier('__get', $stmt->name->getAttributes()),
                 [
-                    new PhpParser\Node\Arg(
-                        new PhpParser\Node\Scalar\String_(
+                    new VirtualArg(
+                        new VirtualString(
                             $prop_name,
                             $stmt->name->getAttributes()
                         )
@@ -686,7 +765,8 @@ class AtomicPropertyFetchAnalyzer
         Type\Union $type,
         string $property_id,
         \Psalm\Storage\ClassLikeStorage $class_storage,
-        bool $in_assignment
+        bool $in_assignment,
+        ?Context $context = null
     ) : void {
         if (!$statements_analyzer->data_flow_graph) {
             return;
@@ -696,6 +776,17 @@ class AtomicPropertyFetchAnalyzer
 
         $var_location = new CodeLocation($statements_analyzer->getSource(), $stmt->var);
         $property_location = new CodeLocation($statements_analyzer->getSource(), $stmt);
+
+        $added_taints = [];
+        $removed_taints = [];
+
+        if ($context) {
+            $codebase = $statements_analyzer->getCodebase();
+            $event = new AddRemoveTaintsEvent($stmt, $context, $statements_analyzer, $codebase);
+
+            $added_taints = $codebase->config->eventDispatcher->dispatchAddTaints($event);
+            $removed_taints = $codebase->config->eventDispatcher->dispatchRemoveTaints($event);
+        }
 
         if ($class_storage->specialize_instance) {
             $var_id = ExpressionIdentifier::getArrayVarId(
@@ -739,7 +830,9 @@ class AtomicPropertyFetchAnalyzer
                     $var_node,
                     $property_node,
                     'property-fetch'
-                        . ($stmt->name instanceof PhpParser\Node\Identifier ? '-' . $stmt->name : '')
+                        . ($stmt->name instanceof PhpParser\Node\Identifier ? '-' . $stmt->name : ''),
+                    $added_taints,
+                    $removed_taints
                 );
 
                 if ($var_type && $var_type->parent_nodes) {
@@ -747,7 +840,9 @@ class AtomicPropertyFetchAnalyzer
                         $data_flow_graph->addPath(
                             $parent_node,
                             $var_node,
-                            '='
+                            '=',
+                            $added_taints,
+                            $removed_taints
                         );
                     }
                 }
@@ -779,9 +874,21 @@ class AtomicPropertyFetchAnalyzer
             $data_flow_graph->addNode($property_node);
 
             if ($in_assignment) {
-                $data_flow_graph->addPath($localized_property_node, $property_node, 'property-assignment');
+                $data_flow_graph->addPath(
+                    $localized_property_node,
+                    $property_node,
+                    'property-assignment',
+                    $added_taints,
+                    $removed_taints
+                );
             } else {
-                $data_flow_graph->addPath($property_node, $localized_property_node, 'property-fetch');
+                $data_flow_graph->addPath(
+                    $property_node,
+                    $localized_property_node,
+                    'property-fetch',
+                    $added_taints,
+                    $removed_taints
+                );
             }
 
             $type->parent_nodes = [$localized_property_node->id => $localized_property_node];
@@ -917,7 +1024,7 @@ class AtomicPropertyFetchAnalyzer
             if ($lhs_type_part->from_docblock) {
                 if (IssueBuffer::accepts(
                     new UndefinedDocblockClass(
-                        'Cannot set properties of undefined docblock class ' . $lhs_type_part->value,
+                        'Cannot get properties of undefined docblock class ' . $lhs_type_part->value,
                         new CodeLocation($statements_analyzer->getSource(), $stmt),
                         $lhs_type_part->value
                     ),
@@ -928,7 +1035,7 @@ class AtomicPropertyFetchAnalyzer
             } else {
                 if (IssueBuffer::accepts(
                     new UndefinedClass(
-                        'Cannot set properties of undefined class ' . $lhs_type_part->value,
+                        'Cannot get properties of undefined class ' . $lhs_type_part->value,
                         new CodeLocation($statements_analyzer->getSource(), $stmt),
                         $lhs_type_part->value
                     ),
@@ -992,7 +1099,8 @@ class AtomicPropertyFetchAnalyzer
                 $stmt_type,
                 $property_id,
                 $class_storage,
-                $in_assignment
+                $in_assignment,
+                $context
             );
 
             return;

@@ -2,32 +2,40 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression\Call\StaticMethod;
 
 use PhpParser;
-use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
-use Psalm\Internal\Analyzer\MethodAnalyzer;
-use Psalm\Internal\Analyzer\NamespaceAnalyzer;
-use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\Call\ArgumentsAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\Call\MethodCallAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\Call\Method\MethodVisibilityAnalyzer;
-use Psalm\Internal\Analyzer\Statements\Expression\Fetch\AtomicPropertyFetchAnalyzer;
-use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\CodeLocation;
 use Psalm\Context;
+use Psalm\Internal\Analyzer\ClassLikeAnalyzer;
+use Psalm\Internal\Analyzer\ClassLikeNameOptions;
+use Psalm\Internal\Analyzer\MethodAnalyzer;
+use Psalm\Internal\Analyzer\NamespaceAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\Call\ArgumentsAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\Call\Method\MethodVisibilityAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\Call\MethodCallAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\CallAnalyzer;
+use Psalm\Internal\Analyzer\Statements\Expression\Fetch\AtomicPropertyFetchAnalyzer;
+use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
+use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\Internal\MethodIdentifier;
 use Psalm\Issue\DeprecatedClass;
-use Psalm\Issue\InvalidStringClass;
 use Psalm\Issue\InternalClass;
+use Psalm\Issue\InvalidStringClass;
 use Psalm\Issue\MixedMethodCall;
 use Psalm\Issue\UndefinedClass;
 use Psalm\IssueBuffer;
+use Psalm\Node\Expr\VirtualArray;
+use Psalm\Node\Expr\VirtualArrayItem;
+use Psalm\Node\Expr\VirtualMethodCall;
+use Psalm\Node\Expr\VirtualVariable;
+use Psalm\Node\Scalar\VirtualString;
+use Psalm\Node\VirtualArg;
 use Psalm\Type;
 use Psalm\Type\Atomic\TNamedObject;
+
+use function array_filter;
+use function array_map;
 use function count;
 use function in_array;
 use function strtolower;
-use function array_map;
-use function array_filter;
 
 class AtomicStaticCallAnalyzer
 {
@@ -59,9 +67,11 @@ class AtomicStaticCallAnalyzer
                     ? $context->calling_method_id
                     : null,
                 $statements_analyzer->getSuppressedIssues(),
-                $stmt->class instanceof PhpParser\Node\Name
-                    && count($stmt->class->parts) === 1
-                    && in_array(strtolower($stmt->class->parts[0]), ['self', 'static'], true)
+                new ClassLikeNameOptions(
+                    $stmt->class instanceof PhpParser\Node\Name
+                        && count($stmt->class->parts) === 1
+                        && in_array(strtolower($stmt->class->parts[0]), ['self', 'static'], true)
+                )
             )) {
                 return;
             }
@@ -78,8 +88,7 @@ class AtomicStaticCallAnalyzer
                 new CodeLocation($statements_analyzer, $stmt->class),
                 $context->self,
                 $context->calling_method_id,
-                $statements_analyzer->getSuppressedIssues(),
-                false
+                $statements_analyzer->getSuppressedIssues()
             )) {
                 return;
             }
@@ -112,8 +121,7 @@ class AtomicStaticCallAnalyzer
                 new CodeLocation($statements_analyzer, $stmt->class),
                 $context->self,
                 $context->calling_method_id,
-                $statements_analyzer->getSuppressedIssues(),
-                false
+                $statements_analyzer->getSuppressedIssues()
             )) {
                 return;
             }
@@ -180,12 +188,12 @@ class AtomicStaticCallAnalyzer
             );
         } else {
             if ($stmt->name instanceof PhpParser\Node\Expr) {
-                $was_inside_use = $context->inside_use;
-                $context->inside_use = true;
+                $was_inside_general_use = $context->inside_general_use;
+                $context->inside_general_use = true;
 
                 ExpressionAnalyzer::analyze($statements_analyzer, $stmt->name, $context);
 
-                $context->inside_use = $was_inside_use;
+                $context->inside_general_use = $was_inside_general_use;
             }
 
             if (!$context->ignore_variable_method) {
@@ -292,7 +300,8 @@ class AtomicStaticCallAnalyzer
                 : null,
             $statements_analyzer,
             $statements_analyzer->getFilePath(),
-            false
+            false,
+            $context->insideUse()
         );
 
         $fake_method_exists = false;
@@ -332,7 +341,9 @@ class AtomicStaticCallAnalyzer
                     && !$context->collect_mutations
                         ? $statements_analyzer
                         : null,
-                    $statements_analyzer->getFilePath()
+                    $statements_analyzer->getFilePath(),
+                    true,
+                    $context->insideUse()
                 )) {
                     $mixin_candidates = [];
                     foreach ($class_storage->templatedMixins as $mixin_candidate) {
@@ -394,8 +405,8 @@ class AtomicStaticCallAnalyzer
 
                     $context->vars_in_scope['$tmp_mixin_var'] = $new_lhs_type;
 
-                    $fake_method_call_expr = new PhpParser\Node\Expr\MethodCall(
-                        new PhpParser\Node\Expr\Variable(
+                    $fake_method_call_expr = new VirtualMethodCall(
+                        new VirtualVariable(
                             'tmp_mixin_var',
                             $stmt->class->getAttributes()
                         ),
@@ -450,14 +461,16 @@ class AtomicStaticCallAnalyzer
                     && !$context->collect_mutations
                     ? $statements_analyzer
                     : null,
-                $statements_analyzer->getFilePath()
+                $statements_analyzer->getFilePath(),
+                true,
+                $context->insideUse()
             )) {
                 if ($codebase->methods->return_type_provider->has($fq_class_name)) {
                     $return_type_candidate = $codebase->methods->return_type_provider->getReturnType(
                         $statements_analyzer,
                         $method_id->fq_class_name,
                         $method_id->method_name,
-                        $stmt->args,
+                        $stmt,
                         $context,
                         new CodeLocation($statements_analyzer->getSource(), $stmt_name),
                         null,
@@ -516,7 +529,7 @@ class AtomicStaticCallAnalyzer
 
                 $array_values = array_map(
                     function (PhpParser\Node\Arg $arg): PhpParser\Node\Expr\ArrayItem {
-                        return new PhpParser\Node\Expr\ArrayItem(
+                        return new VirtualArrayItem(
                             $arg->value,
                             null,
                             false,
@@ -527,14 +540,14 @@ class AtomicStaticCallAnalyzer
                 );
 
                 $args = [
-                    new PhpParser\Node\Arg(
-                        new PhpParser\Node\Scalar\String_((string) $method_id, $stmt_name->getAttributes()),
+                    new VirtualArg(
+                        new VirtualString((string) $method_id, $stmt_name->getAttributes()),
                         false,
                         false,
                         $stmt_name->getAttributes()
                     ),
-                    new PhpParser\Node\Arg(
-                        new PhpParser\Node\Expr\Array_($array_values, $stmt->getAttributes()),
+                    new VirtualArg(
+                        new VirtualArray($array_values, $stmt->getAttributes()),
                         false,
                         false,
                         $stmt->getAttributes()
@@ -685,8 +698,8 @@ class AtomicStaticCallAnalyzer
 
                 $statements_analyzer->node_data = clone $statements_analyzer->node_data;
 
-                $fake_method_call_expr = new PhpParser\Node\Expr\MethodCall(
-                    new PhpParser\Node\Expr\Variable(
+                $fake_method_call_expr = new VirtualMethodCall(
+                    new VirtualVariable(
                         'this',
                         $stmt->class->getAttributes()
                     ),
@@ -824,7 +837,8 @@ class AtomicStaticCallAnalyzer
                     (string) $method_id,
                     $return_type_candidate,
                     $method_storage,
-                    null
+                    null,
+                    $context
                 );
             }
 
@@ -859,6 +873,7 @@ class AtomicStaticCallAnalyzer
         if ($lhs_type_part instanceof Type\Atomic\TMixed
             || $lhs_type_part instanceof Type\Atomic\TTemplateParam
             || $lhs_type_part instanceof Type\Atomic\TClassString
+            || $lhs_type_part instanceof Type\Atomic\TObject
         ) {
             if ($stmt->name instanceof PhpParser\Node\Identifier) {
                 $codebase->analyzer->addMixedMemberName(

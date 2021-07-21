@@ -1,15 +1,10 @@
 <?php
 namespace Psalm\Internal\PhpVisitor\Reflector;
 
-use function array_pop;
-use function count;
-use function explode;
-use function implode;
-use function is_string;
 use PhpParser;
 use Psalm\Aliases;
-use Psalm\Codebase;
 use Psalm\CodeLocation;
+use Psalm\Codebase;
 use Psalm\Config;
 use Psalm\Exception\DocblockParseException;
 use Psalm\Exception\IncorrectDocblockException;
@@ -33,9 +28,15 @@ use Psalm\Storage\FunctionStorage;
 use Psalm\Storage\MethodStorage;
 use Psalm\Storage\PropertyStorage;
 use Psalm\Type;
+
+use function array_pop;
+use function count;
+use function explode;
+use function implode;
+use function is_string;
+use function strlen;
 use function strpos;
 use function strtolower;
-use function strlen;
 
 class FunctionLikeNodeScanner
 {
@@ -168,7 +169,7 @@ class FunctionLikeNodeScanner
         $has_optional_param = false;
 
         $existing_params = [];
-        $storage->params = [];
+        $storage->setParams([]);
 
         foreach ($stmt->getParams() as $param) {
             if ($param->var instanceof PhpParser\Node\Expr\Error) {
@@ -217,8 +218,7 @@ class FunctionLikeNodeScanner
             }
 
             $existing_params['$' . $param_storage->name] = $i;
-            $storage->param_lookup[$param_storage->name] = !!$param->type;
-            $storage->params[] = $param_storage;
+            $storage->addParam($param_storage, !!$param->type);
 
             if (!$param_storage->is_optional && !$param_storage->is_variadic) {
                 $required_param_count = $i + 1;
@@ -340,6 +340,20 @@ class FunctionLikeNodeScanner
 
                 $storage->assertions = $var_assertions;
             }
+
+            if ($stmt instanceof PhpParser\Node\Stmt\ClassMethod
+                && $stmt->stmts
+                && $storage instanceof MethodStorage
+            ) {
+                $last_stmt = \end($stmt->stmts);
+
+                if ($last_stmt instanceof PhpParser\Node\Stmt\Return_
+                    && $last_stmt->expr instanceof PhpParser\Node\Expr\Variable
+                    && $last_stmt->expr->name === 'this'
+                ) {
+                    $storage->probably_fluent = true;
+                }
+            }
         }
 
         if (!$this->file_scanner->will_analyze
@@ -452,6 +466,18 @@ class FunctionLikeNodeScanner
                         && $docblock_info->since_php_minor_version > $this->codebase->php_minor_version
                     ) {
                         return false;
+                    }
+                }
+
+                if ($stmt instanceof PhpParser\Node\Expr\Closure
+                    || $stmt instanceof PhpParser\Node\Expr\ArrowFunction
+                ) {
+                    if ($docblock_info->templates !== []) {
+                        $docblock_info->templates = [];
+                        $storage->docblock_issues[] = new InvalidDocblock(
+                            'Templated closures are not supported',
+                            new CodeLocation($this->file_scanner, $stmt, null, true)
+                        );
                     }
                 }
 
@@ -589,16 +615,14 @@ class FunctionLikeNodeScanner
                 $classlike_storage->appearing_property_ids[$param_storage->name] = $property_id;
                 $classlike_storage->initialized_properties[$param_storage->name] = true;
             }
-        }
 
-        if ($stmt instanceof PhpParser\Node\Stmt\ClassMethod
-            && $stmt->name->name === '__construct'
-            && $classlike_storage
-            && $storage instanceof MethodStorage
-            && $storage->params
-            && $this->config->infer_property_types_from_constructor
-        ) {
-            $this->inferPropertyTypeFromConstructor($stmt, $storage, $classlike_storage);
+            if ($stmt instanceof PhpParser\Node\Stmt\ClassMethod
+                && $storage instanceof MethodStorage
+                && $storage->params
+                && $this->config->infer_property_types_from_constructor
+            ) {
+                $this->inferPropertyTypeFromConstructor($stmt, $storage, $classlike_storage);
+            }
         }
 
         foreach ($stmt->getAttrGroups() as $attr_group) {
@@ -752,6 +776,28 @@ class FunctionLikeNodeScanner
             throw new \UnexpectedValueException('Not expecting param name to be non-string');
         }
 
+        $default_type = null;
+
+        if ($param->default) {
+            $default_type = SimpleTypeInferer::infer(
+                $this->codebase,
+                new \Psalm\Internal\Provider\NodeDataProvider(),
+                $param->default,
+                $this->aliases,
+                null,
+                null,
+                $fq_classlike_name
+            );
+
+            if (!$default_type) {
+                $default_type = ExpressionResolver::getUnresolvedClassConstExpr(
+                    $param->default,
+                    $this->aliases,
+                    $fq_classlike_name
+                );
+            }
+        }
+
         return new FunctionLikeParameter(
             $param->var->name,
             $param->byRef,
@@ -777,17 +823,7 @@ class FunctionLikeNodeScanner
             $is_optional,
             $is_nullable,
             $param->variadic,
-            $param->default
-                ? SimpleTypeInferer::infer(
-                    $this->codebase,
-                    new \Psalm\Internal\Provider\NodeDataProvider(),
-                    $param->default,
-                    $this->aliases,
-                    null,
-                    null,
-                    $fq_classlike_name
-                )
-                : null
+            $default_type
         );
     }
 
@@ -931,6 +967,29 @@ class FunctionLikeNodeScanner
                     $duplicate_method_storage->has_visitor_issues = true;
 
                     return false;
+                } else {
+                    // skip methods based on @since docblock tag
+                    $doc_comment = $stmt->getDocComment();
+
+                    if ($doc_comment) {
+                        $docblock_info = null;
+                        try {
+                            $docblock_info = FunctionLikeDocblockParser::parse($doc_comment);
+                        } catch (IncorrectDocblockException|DocblockParseException $e) {
+                        }
+                        if ($docblock_info) {
+                            if ($docblock_info->since_php_major_version && !$this->aliases->namespace) {
+                                if ($docblock_info->since_php_major_version > $this->codebase->php_major_version) {
+                                    return false;
+                                }
+                                if ($docblock_info->since_php_major_version === $this->codebase->php_major_version
+                                    && $docblock_info->since_php_minor_version > $this->codebase->php_minor_version
+                                ) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 $is_functionlike_override = true;

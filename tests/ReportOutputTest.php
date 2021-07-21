@@ -5,18 +5,19 @@ namespace Psalm\Tests;
 use DOMDocument;
 use Psalm\Context;
 use Psalm\Internal\Analyzer\ProjectAnalyzer;
+use Psalm\Internal\Provider\FakeFileProvider;
 use Psalm\Internal\RuntimeCaches;
 use Psalm\IssueBuffer;
 use Psalm\Report;
 use Psalm\Report\JsonReport;
 use Psalm\Tests\Internal\Provider;
 
+use function array_values;
 use function file_get_contents;
 use function json_decode;
 use function ob_end_clean;
 use function ob_start;
 use function preg_replace;
-use function array_values;
 use function unlink;
 
 class ReportOutputTest extends TestCase
@@ -26,7 +27,7 @@ class ReportOutputTest extends TestCase
         // `TestCase::setUp()` creates its own ProjectAnalyzer and Config instance, but we don't want to do that in this
         // case, so don't run a `parent::setUp()` call here.
         RuntimeCaches::clearAll();
-        $this->file_provider = new Provider\FakeFileProvider();
+        $this->file_provider = new FakeFileProvider();
 
         $config = new TestConfig();
         $config->throw_exception = false;
@@ -68,13 +69,13 @@ class ReportOutputTest extends TestCase
     public function analyzeTaintFlowFilesForReport() : void
     {
         $vulnerable_file_contents = '<?php
- 
+
 function addPrefixToInput($prefix, $input): string {
     return $prefix . $input;
 }
 
 $prefixedData = addPrefixToInput(\'myprefix\', $_POST[\'cmd\']);
-        
+
 shell_exec($prefixedData);
 
 echo "Successfully executed the command: " . $prefixedData;';
@@ -93,13 +94,14 @@ echo "Successfully executed the command: " . $prefixedData;';
 
         $issue_data = [
             'version' => '2.1.0',
+            '$schema' => 'https://json.schemastore.org/sarif-2.1.0.json',
             'runs' => [
                 [
                     'tool' => [
                         'driver' => [
                             'name' => 'Psalm',
                             'informationUri' => 'https://psalm.dev',
-                            'version' => '2.0.0',
+                            'version' => '4.0.0',
                             'rules' => [
                                 [
                                     'id' => '246',
@@ -133,6 +135,23 @@ echo "Successfully executed the command: " . $prefixedData;';
                                     'help' => [
                                         'markdown' => file_get_contents(__DIR__ . '/../docs/running_psalm/issues/TaintedHtml.md'),
                                         'text' => file_get_contents(__DIR__ . '/../docs/running_psalm/issues/TaintedHtml.md'),
+                                    ],
+                                ],
+                                [
+                                    'id' => '274',
+                                    'name' => 'TaintedTextWithQuotes',
+                                    'shortDescription' => [
+                                        'text' => 'TaintedTextWithQuotes'
+                                    ],
+                                    'properties' => [
+                                        'tags' => [
+                                            'security'
+                                        ],
+                                    ],
+                                    'helpUri' => 'https://psalm.dev/274',
+                                    'help' => [
+                                        'markdown' => file_get_contents(__DIR__ . '/../docs/running_psalm/issues/TaintedTextWithQuotes.md'),
+                                        'text' => file_get_contents(__DIR__ . '/../docs/running_psalm/issues/TaintedTextWithQuotes.md'),
                                     ],
                                 ],
                             ]
@@ -463,6 +482,176 @@ echo "Successfully executed the command: " . $prefixedData;';
                                     ]
                                 ]
                             ]
+                        ],
+                        [
+                            'ruleId' => '274',
+                            'message' => [
+                                'text' => 'Detected tainted text with possible quotes'
+                            ],
+                            'level' => 'error',
+                            'locations' => [
+                                [
+                                    'physicalLocation' => [
+                                        'artifactLocation' => [
+                                            'uri' => 'taintflow-test/vulnerable.php'
+                                        ],
+                                        'region' => [
+                                            'startLine' => 11,
+                                            'endLine' => 11,
+                                            'startColumn' => 6,
+                                            'endColumn' => 59
+                                        ]
+                                    ]
+                                ]
+                            ],
+                            'codeFlows' => [
+                                [
+                                    'message' => [
+                                        'text' => 'Tracing the path from user input to insecure usage'
+                                    ],
+                                    'threadFlows' => [
+                                        [
+                                            'locations' => [
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 7,
+                                                                'endLine' => 7,
+                                                                'startColumn' => 46,
+                                                                'endColumn' => 52
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ],
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 7,
+                                                                'endLine' => 7,
+                                                                'startColumn' => 46,
+                                                                'endColumn' => 59
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ],
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 3,
+                                                                'endLine' => 3,
+                                                                'startColumn' => 36,
+                                                                'endColumn' => 42
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ],
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 3,
+                                                                'endLine' => 3,
+                                                                'startColumn' => 36,
+                                                                'endColumn' => 42
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ],
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 4,
+                                                                'endLine' => 4,
+                                                                'startColumn' => 12,
+                                                                'endColumn' => 28
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ],
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 3,
+                                                                'endLine' => 3,
+                                                                'startColumn' => 45,
+                                                                'endColumn' => 51
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ],
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 7,
+                                                                'endLine' => 7,
+                                                                'startColumn' => 1,
+                                                                'endColumn' => 14
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ],
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 11,
+                                                                'endLine' => 11,
+                                                                'startColumn' => 6,
+                                                                'endColumn' => 59
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ],
+                                                [
+                                                    'location' => [
+                                                        'physicalLocation' => [
+                                                            'artifactLocation' => [
+                                                                'uri' => 'taintflow-test/vulnerable.php'
+                                                            ],
+                                                            'region' => [
+                                                                'startLine' => 11,
+                                                                'endLine' => 11,
+                                                                'startColumn' => 6,
+                                                                'endColumn' => 59
+                                                            ]
+                                                        ]
+                                                    ]
+                                                ]
+                                            ]
+                                        ]
+                                    ]
+                                ]
+                            ]
                         ]
                     ]
                 ]
@@ -529,7 +718,8 @@ echo $a;';
                 'error_level' => -1,
                 'shortcode' => 24,
                 'link' => 'https://psalm.dev/024',
-                'taint_trace' => null
+                'taint_trace' => null,
+                'other_references' => null,
             ],
             [
                 'severity' => 'error',
@@ -550,7 +740,8 @@ echo $a;';
                 'error_level' => 1,
                 'shortcode' => 138,
                 'link' => 'https://psalm.dev/138',
-                'taint_trace' => null
+                'taint_trace' => null,
+                'other_references' => null,
             ],
             [
                 'severity' => 'error',
@@ -571,7 +762,8 @@ echo $a;';
                 'error_level' => 1,
                 'shortcode' => 47,
                 'link' => 'https://psalm.dev/047',
-                'taint_trace' => null
+                'taint_trace' => null,
+                'other_references' => null,
             ],
             [
                 'severity' => 'error',
@@ -592,7 +784,8 @@ echo $a;';
                 'error_level' => -1,
                 'shortcode' => 20,
                 'link' => 'https://psalm.dev/020',
-                'taint_trace' => null
+                'taint_trace' => null,
+                'other_references' => null,
             ],
             [
                 'severity' => 'info',
@@ -613,7 +806,8 @@ echo $a;';
                 'error_level' => 3,
                 'shortcode' => 126,
                 'link' => 'https://psalm.dev/126',
-                'taint_trace' => null
+                'taint_trace' => null,
+                'other_references' => null,
             ],
         ];
 

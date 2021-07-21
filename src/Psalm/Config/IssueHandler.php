@@ -1,14 +1,16 @@
 <?php
 namespace Psalm\Config;
 
+use SimpleXMLElement;
+
 use function array_filter;
 use function array_map;
 use function dirname;
 use function in_array;
 use function scandir;
-use SimpleXMLElement;
 use function strtolower;
 use function substr;
+
 use const SCANDIR_SORT_NONE;
 
 class IssueHandler
@@ -157,7 +159,9 @@ class IssueHandler
                     && $issue_name !== 'CodeIssue'
                     && $issue_name !== 'PsalmInternalError'
                     && $issue_name !== 'ParseError'
-                    && $issue_name !== 'PluginIssue';
+                    && $issue_name !== 'PluginIssue'
+                    && $issue_name !== 'MixedIssue'
+                    && $issue_name !== 'MixedIssueTrait';
             }
         );
     }

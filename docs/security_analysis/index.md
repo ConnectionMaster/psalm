@@ -26,10 +26,11 @@ Psalm recognises a number of taint types by default, defined in the [Psalm\Type\
 - `sql` - used for strings that could contain SQL
 - `ldap` - used for strings that could contain a ldap DN or filter
 - `html` - used for strings that could contain angle brackets or unquoted strings
+- `has_quotes` - used for strings that could contain unquoted strings
 - `shell` - used for strings that could contain shell commands
 - `callable` - used for callable strings that could be user-controlled
 - `unserialize` - used for strings that could contain a serialized string
-- `include` - used for strings that could contain a path beeing included
+- `include` - used for strings that could contain a path being included
 - `eval` - used for strings that could contain code
 - `ssrf` - used for strings that could contain text passed to Curl or similar
 - `file` - used for strings that could contain a path
@@ -48,7 +49,7 @@ You can also [define your own taint sources](custom_taint_sources.md).
 
 ## Taint Sinks
 
-Psalm currently defines a number of different for builtin functions and methods, including `echo`, `include`, `header`.
+Psalm currently defines a number of different sinks for builtin functions and methods, including `echo`, `include`, `header`.
 
 You can also [define your own taint sinks](custom_taint_sinks.md).
 

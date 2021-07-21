@@ -3,9 +3,10 @@ namespace Psalm\Issue;
 
 use Psalm\CodeLocation;
 use Psalm\Config;
+
+use function array_pop;
 use function explode;
 use function get_called_class;
-use function array_pop;
 
 abstract class CodeIssue
 {
@@ -38,7 +39,7 @@ abstract class CodeIssue
     }
 
     /**
-     * @deprecated
+     * @deprecated going to be removed in Psalm 5
      * @psalm-suppress PossiblyUnusedMethod
      */
     public function getLocation(): CodeLocation
@@ -69,7 +70,7 @@ abstract class CodeIssue
     }
 
     /**
-     * @deprecated
+     * @deprecated going to be removed in Psalm 5
      * @psalm-suppress PossiblyUnusedMethod for convenience
      */
     public function getFileName(): string
@@ -78,7 +79,7 @@ abstract class CodeIssue
     }
 
     /**
-     * @deprecated
+     * @deprecated going to be removed in Psalm 5
      * @psalm-suppress PossiblyUnusedMethod
      */
     public function getMessage(): string
@@ -113,7 +114,17 @@ abstract class CodeIssue
             $location->getEndColumn(),
             (int) static::SHORTCODE,
             (int) static::ERROR_LEVEL,
-            $this instanceof TaintedInput ? $this->getTaintTrace() : null,
+            $this instanceof TaintedInput
+                ? $this->getTaintTrace()
+                : null,
+            $this instanceof MixedIssue && ($origin_location = $this->getOriginalLocation())
+                ? [
+                    TaintedInput::nodeToDataFlowNodeData(
+                        $origin_location,
+                        'The type of ' . $location->getSelectedText() . ' is sourced from here'
+                    )
+                ]
+                : null,
             $this->dupe_key
         );
     }

@@ -1,20 +1,12 @@
 <?php
 namespace Psalm\Internal\Codebase;
 
-use function array_filter;
-use function array_intersect_key;
-use function array_merge;
-use function count;
-use function explode;
 use InvalidArgumentException;
-use function number_format;
-use function pathinfo;
 use PhpParser;
-use function preg_replace;
 use Psalm\Config;
 use Psalm\FileManipulation;
-use Psalm\Internal\Analyzer\IssueData;
 use Psalm\Internal\Analyzer\FileAnalyzer;
+use Psalm\Internal\Analyzer\IssueData;
 use Psalm\Internal\Analyzer\ProjectAnalyzer;
 use Psalm\Internal\FileManipulation\ClassDocblockManipulator;
 use Psalm\Internal\FileManipulation\FileManipulationBuffer;
@@ -24,10 +16,21 @@ use Psalm\Internal\Provider\FileProvider;
 use Psalm\Internal\Provider\FileStorageProvider;
 use Psalm\IssueBuffer;
 use Psalm\Progress\Progress;
+
+use function array_filter;
+use function array_intersect_key;
+use function array_merge;
+use function array_values;
+use function count;
+use function explode;
+use function implode;
+use function number_format;
+use function pathinfo;
+use function preg_replace;
 use function strpos;
 use function substr;
 use function usort;
-use function array_values;
+
 use const PATHINFO_EXTENSION;
 
 /**
@@ -45,12 +48,17 @@ use const PATHINFO_EXTENSION;
  *      nonmethod_references_to_classes: array<string, array<string,bool>>,
  *      method_references_to_classes: array<string, array<string,bool>>,
  *      file_references_to_class_members: array<string, array<string,bool>>,
+ *      file_references_to_class_properties: array<string, array<string,bool>>,
+ *      file_references_to_method_returns: array<string, array<string,bool>>,
  *      file_references_to_missing_class_members: array<string, array<string,bool>>,
  *      mixed_counts: array<string, array{0: int, 1: int}>,
  *      mixed_member_names: array<string, array<string, bool>>,
  *      function_timings: array<string, float>,
  *      file_manipulations: array<string, FileManipulation[]>,
  *      method_references_to_class_members: array<string, array<string,bool>>,
+ *      method_dependencies: array<string, array<string,bool>>,
+ *      method_references_to_method_returns: array<string, array<string,bool>>,
+ *      method_references_to_class_properties: array<string, array<string,bool>>,
  *      method_references_to_missing_class_members: array<string, array<string,bool>>,
  *      method_param_uses: array<string, array<int, array<string, bool>>>,
  *      analyzed_methods: array<string, array<string, int>>,
@@ -416,7 +424,9 @@ class Analyzer
 
                     $file_reference_provider->setNonMethodReferencesToClasses([]);
                     $file_reference_provider->setCallingMethodReferencesToClassMembers([]);
+                    $file_reference_provider->setCallingMethodReferencesToClassProperties([]);
                     $file_reference_provider->setFileReferencesToClassMembers([]);
+                    $file_reference_provider->setFileReferencesToClassProperties([]);
                     $file_reference_provider->setCallingMethodReferencesToMissingClassMembers([]);
                     $file_reference_provider->setFileReferencesToMissingClassMembers([]);
                     $file_reference_provider->setReferencesToMixedMemberNames([]);
@@ -440,6 +450,11 @@ class Analyzer
                         'method_references_to_classes' => $file_reference_provider->getAllMethodReferencesToClasses(),
                         'file_references_to_class_members' => $file_reference_provider->getAllFileReferencesToClassMembers(),
                         'method_references_to_class_members' => $file_reference_provider->getAllMethodReferencesToClassMembers(),
+                        'method_dependencies' => $file_reference_provider->getAllMethodDependencies(),
+                        'file_references_to_class_properties' => $file_reference_provider->getAllFileReferencesToClassProperties(),
+                        'file_references_to_method_returns' => $file_reference_provider->getAllFileReferencesToMethodReturns(),
+                        'method_references_to_class_properties' => $file_reference_provider->getAllMethodReferencesToClassProperties(),
+                        'method_references_to_method_returns' => $file_reference_provider->getAllMethodReferencesToMethodReturns(),
                         'file_references_to_missing_class_members' => $file_reference_provider->getAllFileReferencesToMissingClassMembers(),
                         'method_references_to_missing_class_members' => $file_reference_provider->getAllMethodReferencesToMissingClassMembers(),
                         'method_param_uses' => $file_reference_provider->getAllMethodParamUses(),
@@ -496,8 +511,23 @@ class Analyzer
                 $codebase->file_reference_provider->addFileReferencesToClassMembers(
                     $pool_data['file_references_to_class_members']
                 );
+                $codebase->file_reference_provider->addFileReferencesToClassProperties(
+                    $pool_data['file_references_to_class_properties']
+                );
+                $codebase->file_reference_provider->addFileReferencesToMethodReturns(
+                    $pool_data['file_references_to_method_returns']
+                );
                 $codebase->file_reference_provider->addMethodReferencesToClassMembers(
                     $pool_data['method_references_to_class_members']
+                );
+                $codebase->file_reference_provider->addMethodDependencies(
+                    $pool_data['method_dependencies']
+                );
+                $codebase->file_reference_provider->addMethodReferencesToClassProperties(
+                    $pool_data['method_references_to_class_properties']
+                );
+                $codebase->file_reference_provider->addMethodReferencesToMethodReturns(
+                    $pool_data['method_references_to_method_returns']
                 );
                 $codebase->file_reference_provider->addFileReferencesToMissingClassMembers(
                     $pool_data['file_references_to_missing_class_members']
@@ -576,11 +606,6 @@ class Analyzer
             $i = 0;
 
             foreach ($this->files_to_analyze as $file_path => $_) {
-                // Remove all current maps for the file, so new analysis doesn't
-                // only append to existing data.
-                unset($this->reference_map[$file_path]);
-                unset($this->type_map[$file_path]);
-                unset($this->argument_map[$file_path]);
                 $analysis_worker($i, $file_path);
                 ++$i;
 
@@ -590,6 +615,9 @@ class Analyzer
         }
     }
 
+    /**
+     * @psalm-suppress ComplexMethod
+     */
     public function loadCachedResults(ProjectAnalyzer $project_analyzer): void
     {
         $codebase = $project_analyzer->getCodebase();
@@ -611,15 +639,25 @@ class Analyzer
 
         $changed_members = $statements_provider->getChangedMembers();
         $unchanged_signature_members = $statements_provider->getUnchangedSignatureMembers();
+        $errored_files = $statements_provider->getErrors();
 
         $diff_map = $statements_provider->getDiffMap();
+        $deletion_ranges = $statements_provider->getDeletionRanges();
 
-        $method_references_to_class_members
-            = $file_reference_provider->getAllMethodReferencesToClassMembers();
+        $method_references_to_class_members = $file_reference_provider->getAllMethodReferencesToClassMembers();
+
+        $method_dependencies = $file_reference_provider->getAllMethodDependencies();
+
+        $method_references_to_class_properties = $file_reference_provider->getAllMethodReferencesToClassProperties();
+
+        $method_references_to_method_returns = $file_reference_provider->getAllMethodReferencesToMethodReturns();
+
         $method_references_to_missing_class_members =
             $file_reference_provider->getAllMethodReferencesToMissingClassMembers();
 
-        $all_referencing_methods = $method_references_to_class_members + $method_references_to_missing_class_members;
+        $all_referencing_methods = $method_references_to_class_members
+            + $method_references_to_missing_class_members
+            + $method_dependencies;
 
         $nonmethod_references_to_classes = $file_reference_provider->getAllNonMethodReferencesToClasses();
 
@@ -627,8 +665,12 @@ class Analyzer
 
         $method_param_uses = $file_reference_provider->getAllMethodParamUses();
 
-        $file_references_to_class_members
-            = $file_reference_provider->getAllFileReferencesToClassMembers();
+        $file_references_to_class_members = $file_reference_provider->getAllFileReferencesToClassMembers();
+
+        $file_references_to_class_properties = $file_reference_provider->getAllFileReferencesToClassProperties();
+
+        $file_references_to_method_returns = $file_reference_provider->getAllFileReferencesToMethodReturns();
+
         $file_references_to_missing_class_members
             = $file_reference_provider->getAllFileReferencesToMissingClassMembers();
 
@@ -709,7 +751,12 @@ class Analyzer
 
                 unset(
                     $method_references_to_class_members[$member_id],
+                    $method_dependencies[$member_id],
+                    $method_references_to_class_properties[$member_id],
+                    $method_references_to_method_returns[$member_id],
                     $file_references_to_class_members[$member_id],
+                    $file_references_to_class_properties[$member_id],
+                    $file_references_to_method_returns[$member_id],
                     $method_references_to_missing_class_members[$member_id],
                     $file_references_to_missing_class_members[$member_id],
                     $references_to_mixed_member_names[$member_id],
@@ -732,6 +779,18 @@ class Analyzer
                 unset($method_references_to_class_members[$i][$method_id]);
             }
 
+            foreach ($method_dependencies as $i => $_) {
+                unset($method_dependencies[$i][$method_id]);
+            }
+
+            foreach ($method_references_to_class_properties as $i => $_) {
+                unset($method_references_to_class_properties[$i][$method_id]);
+            }
+
+            foreach ($method_references_to_method_returns as $i => $_) {
+                unset($method_references_to_method_returns[$i][$method_id]);
+            }
+
             foreach ($method_references_to_classes as $i => $_) {
                 unset($method_references_to_classes[$i][$method_id]);
             }
@@ -751,6 +810,11 @@ class Analyzer
             }
         }
 
+        foreach ($errored_files as $file_path => $_) {
+            unset($this->analyzed_methods[$file_path]);
+            unset($this->existing_issues[$file_path]);
+        }
+
         foreach ($this->analyzed_methods as $file_path => $analyzed_methods) {
             foreach ($analyzed_methods as $correct_method_id => $_) {
                 $trait_safe_method_id = $correct_method_id;
@@ -768,7 +832,7 @@ class Analyzer
             }
         }
 
-        $this->shiftFileOffsets($diff_map);
+        $this->shiftFileOffsets($diff_map, $deletion_ranges);
 
         foreach ($this->files_to_analyze as $file_path) {
             $file_reference_provider->clearExistingIssuesForFile($file_path);
@@ -778,6 +842,14 @@ class Analyzer
 
             foreach ($file_references_to_class_members as $i => $_) {
                 unset($file_references_to_class_members[$i][$file_path]);
+            }
+
+            foreach ($file_references_to_class_properties as $i => $_) {
+                unset($file_references_to_class_properties[$i][$file_path]);
+            }
+
+            foreach ($file_references_to_method_returns as $i => $_) {
+                unset($file_references_to_method_returns[$i][$file_path]);
             }
 
             foreach ($nonmethod_references_to_classes as $i => $_) {
@@ -807,12 +879,32 @@ class Analyzer
             $method_references_to_class_members
         );
 
+        $method_dependencies = array_filter(
+            $method_dependencies
+        );
+
+        $method_references_to_class_properties = array_filter(
+            $method_references_to_class_properties
+        );
+
+        $method_references_to_method_returns = array_filter(
+            $method_references_to_method_returns
+        );
+
         $method_references_to_missing_class_members = array_filter(
             $method_references_to_missing_class_members
         );
 
         $file_references_to_class_members = array_filter(
             $file_references_to_class_members
+        );
+
+        $file_references_to_class_properties = array_filter(
+            $file_references_to_class_properties
+        );
+
+        $file_references_to_method_returns = array_filter(
+            $file_references_to_method_returns
         );
 
         $file_references_to_missing_class_members = array_filter(
@@ -839,8 +931,28 @@ class Analyzer
             $method_references_to_class_members
         );
 
+        $file_reference_provider->setMethodDependencies(
+            $method_dependencies
+        );
+
+        $file_reference_provider->setCallingMethodReferencesToClassProperties(
+            $method_references_to_class_properties
+        );
+
+        $file_reference_provider->setCallingMethodReferencesToMethodReturns(
+            $method_references_to_method_returns
+        );
+
         $file_reference_provider->setFileReferencesToClassMembers(
             $file_references_to_class_members
+        );
+
+        $file_reference_provider->setFileReferencesToClassProperties(
+            $file_references_to_class_properties
+        );
+
+        $file_reference_provider->setFileReferencesToMethodReturns(
+            $file_references_to_method_returns
         );
 
         $file_reference_provider->setCallingMethodReferencesToMissingClassMembers(
@@ -870,145 +982,154 @@ class Analyzer
 
     /**
      * @param array<string, array<int, array{int, int, int, int}>> $diff_map
-     *
+     * @param array<string, array<int, array{int, int}>> $deletion_ranges
      */
-    public function shiftFileOffsets(array $diff_map): void
+    public function shiftFileOffsets(array $diff_map, array $deletion_ranges): void
     {
-        foreach ($this->existing_issues as $file_path => &$file_issues) {
+        foreach ($this->existing_issues as $file_path => $file_issues) {
             if (!isset($this->analyzed_methods[$file_path])) {
                 continue;
             }
 
             $file_diff_map = $diff_map[$file_path] ?? [];
+            $file_deletion_ranges = $deletion_ranges[$file_path] ?? [];
 
-            if (!$file_diff_map) {
-                continue;
-            }
-
-            $first_diff_offset = $file_diff_map[0][0];
-            $last_diff_offset = $file_diff_map[count($file_diff_map) - 1][1];
-
-            foreach ($file_issues as $i => &$issue_data) {
-                if ($issue_data->to < $first_diff_offset || $issue_data->from > $last_diff_offset) {
-                    unset($file_issues[$i]);
-                    continue;
-                }
-
-                $matched = false;
-
-                foreach ($file_diff_map as [$from, $to, $file_offset, $line_offset]) {
-                    if ($issue_data->from >= $from
-                        && $issue_data->from <= $to
-                        && !$matched
-                    ) {
-                        $issue_data->from += $file_offset;
-                        $issue_data->to += $file_offset;
-                        $issue_data->snippet_from += $file_offset;
-                        $issue_data->snippet_to += $file_offset;
-                        $issue_data->line_from += $line_offset;
-                        $issue_data->line_to += $line_offset;
-                        $matched = true;
+            if ($file_deletion_ranges) {
+                foreach ($file_issues as $i => $issue_data) {
+                    foreach ($file_deletion_ranges as [$from, $to]) {
+                        if ($issue_data->from >= $from
+                            && $issue_data->from <= $to
+                        ) {
+                            unset($this->existing_issues[$file_path][$i]);
+                            break;
+                        }
                     }
                 }
+            }
 
-                if (!$matched) {
-                    unset($file_issues[$i]);
+            if ($file_diff_map) {
+                foreach ($file_issues as $issue_data) {
+                    foreach ($file_diff_map as [$from, $to, $file_offset, $line_offset]) {
+                        if ($issue_data->from >= $from
+                            && $issue_data->from <= $to
+                        ) {
+                            $issue_data->from += $file_offset;
+                            $issue_data->to += $file_offset;
+                            $issue_data->snippet_from += $file_offset;
+                            $issue_data->snippet_to += $file_offset;
+                            $issue_data->line_from += $line_offset;
+                            $issue_data->line_to += $line_offset;
+                            break;
+                        }
+                    }
                 }
             }
         }
 
-        foreach ($this->reference_map as $file_path => &$reference_map) {
+        foreach ($this->reference_map as $file_path => $reference_map) {
             if (!isset($this->analyzed_methods[$file_path])) {
                 unset($this->reference_map[$file_path]);
                 continue;
             }
 
             $file_diff_map = $diff_map[$file_path] ?? [];
+            $file_deletion_ranges = $deletion_ranges[$file_path] ?? [];
 
-            if (!$file_diff_map) {
-                continue;
+            if ($file_deletion_ranges) {
+                foreach ($reference_map as $reference_from => $_) {
+                    foreach ($file_deletion_ranges as [$from, $to]) {
+                        if ($reference_from >= $from && $reference_from <= $to) {
+                            unset($this->reference_map[$file_path][$reference_from]);
+                            break;
+                        }
+                    }
+                }
             }
 
-            $first_diff_offset = $file_diff_map[0][0];
-            $last_diff_offset = $file_diff_map[count($file_diff_map) - 1][1];
-
-            foreach ($reference_map as $reference_from => [$reference_to, $tag]) {
-                if ($reference_to < $first_diff_offset || $reference_from > $last_diff_offset) {
-                    continue;
-                }
-
-                foreach ($file_diff_map as [$from, $to, $file_offset]) {
-                    if ($reference_from >= $from && $reference_from <= $to) {
-                        unset($reference_map[$reference_from]);
-                        $reference_map[$reference_from += $file_offset] = [
-                            $reference_to += $file_offset,
-                            $tag,
-                        ];
+            if ($file_diff_map) {
+                foreach ($reference_map as $reference_from => [$reference_to, $tag]) {
+                    foreach ($file_diff_map as [$from, $to, $file_offset]) {
+                        if ($reference_from >= $from && $reference_from <= $to) {
+                            unset($this->reference_map[$file_path][$reference_from]);
+                            $this->reference_map[$file_path][$reference_from + $file_offset] = [
+                                $reference_to + $file_offset,
+                                $tag,
+                            ];
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        foreach ($this->type_map as $file_path => &$type_map) {
+        foreach ($this->type_map as $file_path => $type_map) {
             if (!isset($this->analyzed_methods[$file_path])) {
                 unset($this->type_map[$file_path]);
                 continue;
             }
 
             $file_diff_map = $diff_map[$file_path] ?? [];
+            $file_deletion_ranges = $deletion_ranges[$file_path] ?? [];
 
-            if (!$file_diff_map) {
-                continue;
+            if ($file_deletion_ranges) {
+                foreach ($type_map as $type_from => $_) {
+                    foreach ($file_deletion_ranges as [$from, $to]) {
+                        if ($type_from >= $from && $type_from <= $to) {
+                            unset($this->type_map[$file_path][$type_from]);
+                            break;
+                        }
+                    }
+                }
             }
 
-            $first_diff_offset = $file_diff_map[0][0];
-            $last_diff_offset = $file_diff_map[count($file_diff_map) - 1][1];
-
-            foreach ($type_map as $type_from => [$type_to, $tag]) {
-                if ($type_to < $first_diff_offset || $type_from > $last_diff_offset) {
-                    continue;
-                }
-
-                foreach ($file_diff_map as [$from, $to, $file_offset]) {
-                    if ($type_from >= $from && $type_from <= $to) {
-                        unset($type_map[$type_from]);
-                        $type_map[$type_from += $file_offset] = [
-                            $type_to += $file_offset,
-                            $tag,
-                        ];
+            if ($file_diff_map) {
+                foreach ($type_map as $type_from => [$type_to, $tag]) {
+                    foreach ($file_diff_map as [$from, $to, $file_offset]) {
+                        if ($type_from >= $from && $type_from <= $to) {
+                            unset($this->type_map[$file_path][$type_from]);
+                            $this->type_map[$file_path][$type_from + $file_offset] = [
+                                $type_to + $file_offset,
+                                $tag,
+                            ];
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        foreach ($this->argument_map as $file_path => &$argument_map) {
+        foreach ($this->argument_map as $file_path => $argument_map) {
             if (!isset($this->analyzed_methods[$file_path])) {
                 unset($this->argument_map[$file_path]);
                 continue;
             }
 
             $file_diff_map = $diff_map[$file_path] ?? [];
+            $file_deletion_ranges = $deletion_ranges[$file_path] ?? [];
 
-            if (!$file_diff_map) {
-                continue;
+            if ($file_deletion_ranges) {
+                foreach ($argument_map as $argument_from => $_) {
+                    foreach ($file_deletion_ranges as [$from, $to]) {
+                        if ($argument_from >= $from && $argument_from <= $to) {
+                            unset($argument_map[$argument_from]);
+                            break;
+                        }
+                    }
+                }
             }
 
-            $first_diff_offset = $file_diff_map[0][0];
-            $last_diff_offset = $file_diff_map[count($file_diff_map) - 1][1];
-
-            foreach ($argument_map as $argument_from => [$argument_to, $method_id, $argument_number]) {
-                if ($argument_to < $first_diff_offset || $argument_from > $last_diff_offset) {
-                    continue;
-                }
-
-                foreach ($file_diff_map as [$from, $to, $file_offset]) {
-                    if ($argument_from >= $from && $argument_from <= $to) {
-                        unset($argument_map[$argument_from]);
-                        $argument_map[$argument_from += $file_offset] = [
-                            $argument_to += $file_offset,
-                            $method_id,
-                            $argument_number,
-                        ];
+            if ($file_diff_map) {
+                foreach ($argument_map as $argument_from => [$argument_to, $method_id, $argument_number]) {
+                    foreach ($file_diff_map as [$from, $to, $file_offset]) {
+                        if ($argument_from >= $from && $argument_from <= $to) {
+                            unset($this->argument_map[$file_path][$argument_from]);
+                            $this->argument_map[$file_path][$argument_from + $file_offset] = [
+                                $argument_to + $file_offset,
+                                $method_id,
+                                $argument_number,
+                            ];
+                            break;
+                        }
                     }
                 }
             }
@@ -1144,7 +1265,7 @@ class Analyzer
         string $node_type,
         PhpParser\Node $parent_node = null
     ): void {
-        if (!$node_type) {
+        if ($node_type === '') {
             throw new \UnexpectedValueException('non-empty node_type expected');
         }
 
@@ -1161,8 +1282,8 @@ class Analyzer
         string $reference,
         int $argument_number
     ): void {
-        if (!$reference) {
-            throw new \UnexpectedValueException('non-empty node_type expected');
+        if ($reference === '') {
+            throw new \UnexpectedValueException('non-empty reference expected');
         }
 
         $this->argument_map[$file_path][$start_position] = [
@@ -1172,6 +1293,10 @@ class Analyzer
         ];
     }
 
+    /**
+     * @param string $reference The symbol name for the reference.
+     *                          Prepend with an asterisk (*) to signify a reference that doesn't exist.
+     */
     public function addNodeReference(string $file_path, PhpParser\Node $node, string $reference): void
     {
         if (!$reference) {
@@ -1238,18 +1363,21 @@ class Analyzer
 
         $total_files = count($all_deep_scanned_files);
 
+        $lines = [];
+        
         if (!$total_files) {
-            return 'No files analyzed';
+            $lines[] = 'No files analyzed';
         }
 
         if (!$total) {
-            return 'Psalm was unable to infer types in the codebase';
+            $lines[] = 'Psalm was unable to infer types in the codebase';
+        } else {
+            $percentage = $nonmixed_count === $total ? '100' : number_format(100 * $nonmixed_count / $total, 4);
+            $lines[] = 'Psalm was able to infer types for ' . $percentage . '%'
+                . ' of the codebase';
         }
-
-        $percentage = $nonmixed_count === $total ? '100' : number_format(100 * $nonmixed_count / $total, 4);
-
-        return 'Psalm was able to infer types for ' . $percentage . '%'
-            . ' of the codebase';
+        
+        return implode("\n", $lines);
     }
 
     public function getNonMixedStats(): string

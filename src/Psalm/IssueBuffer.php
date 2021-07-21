@@ -1,11 +1,34 @@
 <?php
 namespace Psalm;
 
+use Psalm\Internal\Analyzer\IssueData;
+use Psalm\Internal\Analyzer\ProjectAnalyzer;
+use Psalm\Internal\ExecutionEnvironment\BuildInfoCollector;
+use Psalm\Issue\CodeIssue;
+use Psalm\Issue\ConfigIssue;
+use Psalm\Issue\UnusedPsalmSuppress;
 use Psalm\Plugin\EventHandler\Event\AfterAnalysisEvent;
+use Psalm\Report\CheckstyleReport;
+use Psalm\Report\CodeClimateReport;
+use Psalm\Report\CompactReport;
+use Psalm\Report\ConsoleReport;
+use Psalm\Report\EmacsReport;
+use Psalm\Report\GithubActionsReport;
+use Psalm\Report\JsonReport;
+use Psalm\Report\JsonSummaryReport;
+use Psalm\Report\JunitReport;
 use Psalm\Report\PhpStormReport;
+use Psalm\Report\PylintReport;
+use Psalm\Report\SarifReport;
+use Psalm\Report\SonarqubeReport;
+use Psalm\Report\TextReport;
+use Psalm\Report\XmlReport;
+
+use function array_merge;
 use function array_pop;
 use function array_search;
 use function array_splice;
+use function array_values;
 use function count;
 use function debug_print_backtrace;
 use function dirname;
@@ -13,39 +36,21 @@ use function explode;
 use function file_put_contents;
 use function fwrite;
 use function get_class;
+use function in_array;
 use function is_dir;
 use function memory_get_peak_usage;
-use function mkdir;
 use function microtime;
+use function mkdir;
 use function number_format;
 use function ob_get_clean;
 use function ob_start;
-use function sprintf;
-use Psalm\Internal\Analyzer\IssueData;
-use Psalm\Internal\Analyzer\ProjectAnalyzer;
-use Psalm\Issue\CodeIssue;
-use Psalm\Issue\UnusedPsalmSuppress;
-use Psalm\Report\CheckstyleReport;
-use Psalm\Report\CodeClimateReport;
-use Psalm\Report\CompactReport;
-use Psalm\Report\ConsoleReport;
-use Psalm\Report\EmacsReport;
-use Psalm\Report\GithubActionsReport;
-use Psalm\Report\SarifReport;
-use Psalm\Report\JsonReport;
-use Psalm\Report\JsonSummaryReport;
-use Psalm\Report\JunitReport;
-use Psalm\Report\PylintReport;
-use Psalm\Report\SonarqubeReport;
-use Psalm\Report\TextReport;
-use Psalm\Report\XmlReport;
 use function sha1;
+use function sprintf;
 use function str_repeat;
 use function str_replace;
+use function trim;
 use function usort;
-use function array_merge;
-use function array_values;
-use function in_array;
+
 use const DEBUG_BACKTRACE_IGNORE_ARGS;
 use const STDERR;
 
@@ -92,6 +97,9 @@ class IssueBuffer
      */
     protected static $used_suppressions = [];
 
+    /** @var array<array-key,mixed> */
+    private static $server = [];
+
     /**
      * @param   string[]  $suppressed_issues
      *
@@ -134,7 +142,7 @@ class IssueBuffer
         $issue_type = array_pop($fqcn_parts);
         $file_path = $e->getFilePath();
 
-        if (!$config->reportIssueInFile($issue_type, $file_path)) {
+        if (!$e instanceof ConfigIssue && !$config->reportIssueInFile($issue_type, $file_path)) {
             return true;
         }
 
@@ -248,7 +256,9 @@ class IssueBuffer
 
             $message = $e instanceof \Psalm\Issue\TaintedInput
                 ? $e->getJourneyMessage()
-                : $e->message;
+                : ($e instanceof \Psalm\Issue\MixedIssue
+                    ? $e->getMixedOriginMessage()
+                    : $e->message);
 
             throw new Exception\CodeException(
                 $issue_type
@@ -451,8 +461,15 @@ class IssueBuffer
 
         $codebase = $project_analyzer->getCodebase();
 
+        foreach ($codebase->config->config_issues as $issue) {
+            if (self::accepts($issue)) {
+                // fall through
+            }
+        }
+
         $error_count = 0;
         $info_count = 0;
+
 
         $issues_data = [];
 
@@ -502,7 +519,7 @@ class IssueBuffer
                         if (isset($issue_baseline[$file][$type]) && $issue_baseline[$file][$type]['o'] > 0) {
                             if ($issue_baseline[$file][$type]['o'] === count($issue_baseline[$file][$type]['s'])) {
                                 $position = array_search(
-                                    $issue_data->selected_text,
+                                    trim($issue_data->selected_text),
                                     $issue_baseline[$file][$type]['s'],
                                     true
                                 );
@@ -541,12 +558,13 @@ class IssueBuffer
             }
         }
 
-        $source_control_info = null;
-        $build_info = (new \Psalm\Internal\ExecutionEnvironment\BuildInfoCollector($_SERVER))->collect();
 
         if ($codebase->config->eventDispatcher->after_analysis
             || $codebase->config->eventDispatcher->legacy_after_analysis
         ) {
+            $source_control_info = null;
+            $build_info = (new BuildInfoCollector(self::$server))->collect();
+
             try {
                 $source_control_info = (new \Psalm\Internal\ExecutionEnvironment\GitInfoCollector())->collect();
             } catch (\RuntimeException $e) {
@@ -686,7 +704,7 @@ class IssueBuffer
                 && $project_analyzer->generated_report_options
                 && isset($_SERVER['GITHUB_WORKFLOW']))
         ) {
-            exit(1);
+            exit(2);
         }
     }
 
@@ -858,5 +876,14 @@ class IssueBuffer
         }
 
         self::$recorded_issues[self::$recording_level][] = $e;
+    }
+
+    /**
+     * @internal
+     * @param array<array-key,mixed> $server
+     */
+    final public static function captureServer(array $server): void
+    {
+        self::$server = $server;
     }
 }

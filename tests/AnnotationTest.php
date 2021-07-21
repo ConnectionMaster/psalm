@@ -1,9 +1,10 @@
 <?php
 namespace Psalm\Tests;
 
-use const DIRECTORY_SEPARATOR;
 use Psalm\Config;
 use Psalm\Context;
+
+use const DIRECTORY_SEPARATOR;
 
 class AnnotationTest extends TestCase
 {
@@ -349,6 +350,30 @@ class AnnotationTest extends TestCase
                     $a = [];
 
                     $a[0]->getMessage();',
+            ],
+            'ignoreVarDocblock' => [
+                '<?php
+                    /**
+                     * @var array<Exception>
+                     * @ignore-var
+                     */
+                    $a = [];
+
+                    $a[0]->getMessage();',
+                'assertions' => [],
+                'error_level' => ['EmptyArrayAccess', 'MixedMethodCall'],
+            ],
+            'psalmIgnoreVarDocblock' => [
+                '<?php
+                    /**
+                     * @var array<Exception>
+                     * @psalm-ignore-var
+                     */
+                    $a = [];
+
+                    $a[0]->getMessage();',
+                'assertions' => [],
+                'error_level' => ['EmptyArrayAccess', 'MixedMethodCall'],
             ],
             'mixedDocblockParamTypeDefinedInParent' => [
                 '<?php
@@ -1160,6 +1185,14 @@ class AnnotationTest extends TestCase
 
                     takesFlags(FileFlag::MODIFIED | FileFlag::NEW);'
             ],
+            'intMaskWithZero' => [
+                '<?php
+                    /** @param int-mask<1,2> $_flags */
+                    function takesFlags(int $_flags): void {}
+
+                    takesFlags(0);
+                '
+            ],
             'intMaskOfWithClassWildcard' => [
                 '<?php
                     class FileFlag {
@@ -1177,11 +1210,34 @@ class AnnotationTest extends TestCase
 
                     takesFlags(FileFlag::MODIFIED | FileFlag::NEW);'
             ],
+            'intMaskOfWithZero' => [
+                '<?php
+                    class FileFlag {
+                        public const OPEN = 1;
+                        public const MODIFIED = 2;
+                        public const NEW = 4;
+                    }
+
+                    /** @param int-mask-of<FileFlag::*> $_flags */
+                    function takesFlags(int $_flags): void {}
+
+                    takesFlags(0);
+                '
+            ],
+            'emptyStringFirst' => [
+                '<?php
+                    /**
+                     * @param \'\'|\'a\'|\'b\' $v
+                     */
+                    function testBad(string $v): void {
+                        echo $v;
+                    }'
+            ],
         ];
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {
@@ -1718,6 +1774,20 @@ class AnnotationTest extends TestCase
                         public function run() {}
                     }',
                 'error_message' => 'ImplementedReturnTypeMismatch'
+            ],
+            'unexpectedImportType' => [
+                '<?php
+                    /** @psalm-import-type asd */
+                    function f(): void {}
+                ',
+                'error_message' => 'PossiblyInvalidDocblockTag',
+            ],
+            'unexpectedVarOnFunction' => [
+                '<?php
+                    /** @var int $p */
+                    function f($p): void {}
+                ',
+                'error_message' => 'PossiblyInvalidDocblockTag',
             ],
         ];
     }

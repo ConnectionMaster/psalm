@@ -2,7 +2,6 @@
 
 namespace Psalm\Internal\Scanner;
 
-use const PREG_OFFSET_CAPTURE;
 use function explode;
 use function implode;
 use function min;
@@ -15,6 +14,8 @@ use function strpos;
 use function strspn;
 use function substr;
 use function trim;
+
+use const PREG_OFFSET_CAPTURE;
 
 class DocblockParser
 {
@@ -228,10 +229,14 @@ class DocblockParser
             || isset($docblock->tags['psalm-var'])
             || isset($docblock->tags['phpstan-var'])
         ) {
-            $docblock->combined_tags['var']
-                = ($docblock->tags['var'] ?? [])
-                + ($docblock->tags['phpstan-var'] ?? [])
-                + ($docblock->tags['psalm-var'] ?? []);
+            if (!isset($docblock->tags['ignore-var'])
+                && !isset($docblock->tags['psalm-ignore-var'])
+            ) {
+                $docblock->combined_tags['var']
+                    = ($docblock->tags['var'] ?? [])
+                    + ($docblock->tags['phpstan-var'] ?? [])
+                    + ($docblock->tags['psalm-var'] ?? []);
+            }
         }
 
         if (isset($docblock->tags['param-out'])

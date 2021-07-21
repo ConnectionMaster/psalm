@@ -2,15 +2,13 @@
 
 namespace Psalm\Internal\Type;
 
-use Psalm\Issue\RedundantConditionGivenDocblockType;
-use function get_class;
 use Psalm\CodeLocation;
 use Psalm\Issue\ParadoxicalCondition;
 use Psalm\Issue\RedundantCondition;
+use Psalm\Issue\RedundantConditionGivenDocblockType;
 use Psalm\IssueBuffer;
 use Psalm\Type;
 use Psalm\Type\Atomic;
-use Psalm\Type\Atomic\TKeyedArray;
 use Psalm\Type\Atomic\Scalar;
 use Psalm\Type\Atomic\TArray;
 use Psalm\Type\Atomic\TArrayKey;
@@ -19,6 +17,7 @@ use Psalm\Type\Atomic\TCallable;
 use Psalm\Type\Atomic\TEmpty;
 use Psalm\Type\Atomic\TFloat;
 use Psalm\Type\Atomic\TInt;
+use Psalm\Type\Atomic\TKeyedArray;
 use Psalm\Type\Atomic\TNamedObject;
 use Psalm\Type\Atomic\TNumeric;
 use Psalm\Type\Atomic\TScalar;
@@ -26,6 +25,8 @@ use Psalm\Type\Atomic\TString;
 use Psalm\Type\Atomic\TTemplateParam;
 use Psalm\Type\Atomic\TTrue;
 use Psalm\Type\Reconciler;
+
+use function get_class;
 use function substr;
 
 class SimpleNegatedAssertionReconciler extends Reconciler
@@ -582,7 +583,7 @@ class SimpleNegatedAssertionReconciler extends Reconciler
                 if ($existing_var_atomic_types['string'] instanceof Type\Atomic\TLowercaseString) {
                     $existing_var_type->addType(new Type\Atomic\TNonEmptyLowercaseString);
                 } else {
-                    $existing_var_type->addType(new Type\Atomic\TNonEmptyString);
+                    $existing_var_type->addType(new Type\Atomic\TNonFalsyString);
                 }
             }
 
@@ -707,7 +708,7 @@ class SimpleNegatedAssertionReconciler extends Reconciler
         }
 
         if (isset($existing_var_atomic_types['string'])) {
-            if (!$existing_var_atomic_types['string'] instanceof Type\Atomic\TNonEmptyString
+            if (!$existing_var_atomic_types['string'] instanceof Type\Atomic\TNonFalsyString
                 && !$existing_var_atomic_types['string'] instanceof Type\Atomic\TClassString
                 && !$existing_var_atomic_types['string'] instanceof Type\Atomic\TDependentGetClass
             ) {
@@ -718,7 +719,7 @@ class SimpleNegatedAssertionReconciler extends Reconciler
                 if ($existing_var_atomic_types['string'] instanceof Type\Atomic\TLowercaseString) {
                     $existing_var_type->addType(new Type\Atomic\TNonEmptyLowercaseString);
                 } else {
-                    $existing_var_type->addType(new Type\Atomic\TNonEmptyString);
+                    $existing_var_type->addType(new Type\Atomic\TNonFalsyString);
                 }
             } elseif ($existing_var_type->isSingle() && !$is_equality) {
                 if ($code_location && $key) {
@@ -1170,6 +1171,10 @@ class SimpleNegatedAssertionReconciler extends Reconciler
                 } elseif ($existing_var_type->from_calculation) {
                     $non_int_types[] = new TFloat();
                 }
+            } elseif ($type instanceof TNumeric) {
+                $did_remove_type = true;
+                $non_int_types[] = new TString();
+                $non_int_types[] = new TFloat();
             } else {
                 $non_int_types[] = $type;
             }
@@ -1261,6 +1266,10 @@ class SimpleNegatedAssertionReconciler extends Reconciler
                 if ($is_equality) {
                     $non_float_types[] = $type;
                 }
+            } elseif ($type instanceof TNumeric) {
+                $did_remove_type = true;
+                $non_float_types[] = new TString();
+                $non_float_types[] = new TInt();
             } else {
                 $non_float_types[] = $type;
             }

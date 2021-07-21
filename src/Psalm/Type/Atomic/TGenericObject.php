@@ -1,11 +1,12 @@
 <?php
 namespace Psalm\Type\Atomic;
 
+use Psalm\Type\Atomic;
+
+use function array_merge;
 use function count;
 use function implode;
-use Psalm\Type\Atomic;
 use function substr;
-use function array_merge;
 
 /**
  * Denotes an object type that has generic parameters e.g. `ArrayObject<string, Foo\Bar>`
@@ -13,6 +14,11 @@ use function array_merge;
 class TGenericObject extends TNamedObject
 {
     use GenericTrait;
+
+    /**
+     * @var non-empty-list<\Psalm\Type\Union>
+     */
+    public $type_params;
 
     /** @var bool if the parameters have been remapped to another class */
     public $remapped_params = false;
@@ -66,7 +72,7 @@ class TGenericObject extends TNamedObject
         return parent::toNamespacedString($namespace, $aliased_classes, $this_class, false);
     }
 
-    public function equals(Atomic $other_type): bool
+    public function equals(Atomic $other_type, bool $ensure_source_equality): bool
     {
         if (!$other_type instanceof self) {
             return false;
@@ -77,7 +83,7 @@ class TGenericObject extends TNamedObject
         }
 
         foreach ($this->type_params as $i => $type_param) {
-            if (!$type_param->equals($other_type->type_params[$i])) {
+            if (!$type_param->equals($other_type->type_params[$i], $ensure_source_equality)) {
                 return false;
             }
         }

@@ -92,7 +92,7 @@ class DeprecatedAnnotationTest extends TestCase
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {
@@ -166,6 +166,38 @@ class DeprecatedAnnotationTest extends TestCase
                     }
                     $a = new A;
                     $a->foo = 5;',
+                'error_message' => 'DeprecatedProperty',
+            ],
+            'deprecatedPropertyGetFromInsideTheClass' => [
+                '<?php
+                    class A{
+                        /**
+                         * @deprecated
+                         * @var ?int
+                         */
+                        public $foo;
+                        public function bar(): void
+                        {
+                            echo $this->foo;
+                        }
+                    }
+                ',
+                'error_message' => 'DeprecatedProperty',
+            ],
+            'deprecatedPropertySetFromInsideTheClass' => [
+                '<?php
+                    class A{
+                        /**
+                         * @deprecated
+                         * @var ?int
+                         */
+                        public $foo;
+                        public function bar(int $p): void
+                        {
+                            $this->foo = $p;
+                        }
+                    }
+                ',
                 'error_message' => 'DeprecatedProperty',
             ],
             'deprecatedClassConstant' => [

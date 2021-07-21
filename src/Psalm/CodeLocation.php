@@ -1,22 +1,24 @@
 <?php
 namespace Psalm;
 
+use PhpParser;
+use Psalm\Internal\Analyzer\CommentAnalyzer;
+
 use function explode;
 use function max;
+use function mb_strcut;
 use function min;
-use PhpParser;
 use function preg_match;
-use const PREG_OFFSET_CAPTURE;
 use function preg_quote;
 use function preg_replace;
-use Psalm\Internal\Analyzer\CommentAnalyzer;
 use function str_replace;
 use function strlen;
 use function strpos;
 use function strrpos;
-use function substr;
 use function substr_count;
 use function trim;
+
+use const PREG_OFFSET_CAPTURE;
 
 class CodeLocation
 {
@@ -75,9 +77,6 @@ class CodeLocation
     public $docblock_start;
 
     /** @var int|null */
-    public $docblock_end;
-
-    /** @var int|null */
     private $docblock_start_line_number;
 
     /** @var int|null */
@@ -123,7 +122,6 @@ class CodeLocation
         $doc_comment = $stmt->getDocComment();
 
         $this->docblock_start = $doc_comment ? $doc_comment->getStartFilePos() : null;
-        $this->docblock_end = $doc_comment ? $this->file_start : null;
         $this->docblock_start_line_number = $doc_comment ? $doc_comment->getStartLine() : null;
 
         $this->preview_start = $this->docblock_start ?: $this->file_start;
@@ -183,7 +181,7 @@ class CodeLocation
         ) {
             $preview_lines = explode(
                 "\n",
-                substr(
+                mb_strcut(
                     $file_contents,
                     $this->preview_start,
                     $this->selection_start - $this->preview_start - 1
@@ -206,7 +204,7 @@ class CodeLocation
 
             $indentation = (int)strpos($key_line, '@');
 
-            $key_line = trim(preg_replace('@\**/\s*@', '', substr($key_line, $indentation)));
+            $key_line = trim(preg_replace('@\**/\s*@', '', mb_strcut($key_line, $indentation)));
 
             $this->selection_start = $preview_offset + $indentation + $this->preview_start;
             $this->selection_end = $this->selection_start + strlen($key_line);
@@ -258,7 +256,7 @@ class CodeLocation
                     throw new \UnexpectedValueException('Unrecognised regex type ' . $this->regex_type);
             }
 
-            $preview_snippet = substr(
+            $preview_snippet = mb_strcut(
                 $file_contents,
                 $this->selection_start,
                 $this->selection_end - $this->selection_start
@@ -298,8 +296,8 @@ class CodeLocation
             }
         }
 
-        $this->snippet = substr($file_contents, $this->preview_start, $this->preview_end - $this->preview_start);
-        $this->text = substr($file_contents, $this->selection_start, $this->selection_end - $this->selection_start);
+        $this->snippet = mb_strcut($file_contents, $this->preview_start, $this->preview_end - $this->preview_start);
+        $this->text = mb_strcut($file_contents, $this->selection_start, $this->selection_end - $this->selection_start);
 
         // reset preview start to beginning of line
         $this->column_from = $this->selection_start -

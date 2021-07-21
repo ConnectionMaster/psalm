@@ -2,27 +2,28 @@
 namespace Psalm\Internal\Analyzer\Statements\Block;
 
 use PhpParser;
+use Psalm\CodeLocation;
 use Psalm\Codebase;
+use Psalm\Context;
 use Psalm\Internal\Analyzer\Statements\ExpressionAnalyzer;
 use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\Internal\Clause;
-use Psalm\CodeLocation;
-use Psalm\Context;
+use Psalm\Internal\Scope\IfConditionalScope;
+use Psalm\Internal\Scope\IfScope;
 use Psalm\Issue\DocblockTypeContradiction;
+use Psalm\Issue\RedundantCondition;
 use Psalm\Issue\RedundantConditionGivenDocblockType;
 use Psalm\Issue\TypeDoesNotContainType;
-use Psalm\Issue\RedundantCondition;
 use Psalm\IssueBuffer;
-use Psalm\Internal\Scope\IfScope;
-use Psalm\Internal\Scope\IfConditionalScope;
 use Psalm\Type;
 use Psalm\Type\Reconciler;
-use function array_merge;
-use function array_map;
+
 use function array_diff_key;
 use function array_filter;
-use function array_values;
 use function array_keys;
+use function array_map;
+use function array_merge;
+use function array_values;
 use function count;
 
 class IfConditionalAnalyzer
@@ -149,7 +150,7 @@ class IfConditionalAnalyzer
 
         // we need to clone the current context so our ongoing updates
         // to $outer_context don't mess with elseif/else blocks
-        $original_context = clone $outer_context;
+        $post_if_context = clone $outer_context;
 
         if ($internally_applied_if_cond_expr !== $cond
             || $externally_applied_if_cond_expr !== $cond
@@ -275,7 +276,7 @@ class IfConditionalAnalyzer
 
         return new \Psalm\Internal\Scope\IfConditionalScope(
             $if_context,
-            $original_context,
+            $post_if_context,
             $cond_referenced_var_ids,
             $assigned_in_conditional_var_ids,
             $entry_clauses

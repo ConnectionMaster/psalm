@@ -115,10 +115,11 @@ class PsalmEndToEndTest extends TestCase
     {
         $this->runPsalmInit(1);
         $result = $this->runPsalm([], self::$tmpDir, true);
+        $this->assertStringContainsString('UnusedParam', $result['STDOUT']);
         $this->assertStringContainsString('InvalidReturnType', $result['STDOUT']);
         $this->assertStringContainsString('InvalidReturnStatement', $result['STDOUT']);
-        $this->assertStringContainsString('2 errors', $result['STDOUT']);
-        $this->assertSame(1, $result['CODE']);
+        $this->assertStringContainsString('3 errors', $result['STDOUT']);
+        $this->assertSame(2, $result['CODE']);
     }
 
     public function testPsalmDiff(): void
@@ -131,21 +132,23 @@ class PsalmEndToEndTest extends TestCase
 
         $this->runPsalmInit(1);
         $result = $this->runPsalm(['--diff', '-m'], self::$tmpDir, true);
+        $this->assertStringContainsString('UnusedParam', $result['STDOUT']);
         $this->assertStringContainsString('InvalidReturnType', $result['STDOUT']);
         $this->assertStringContainsString('InvalidReturnStatement', $result['STDOUT']);
-        $this->assertStringContainsString('2 errors', $result['STDOUT']);
+        $this->assertStringContainsString('3 errors', $result['STDOUT']);
         $this->assertStringContainsString('E', $result['STDERR']);
 
-        $this->assertSame(1, $result['CODE']);
+        $this->assertSame(2, $result['CODE']);
 
         $result = $this->runPsalm(['--diff', '-m'], self::$tmpDir, true);
 
+        $this->assertStringContainsString('UnusedParam', $result['STDOUT']);
         $this->assertStringContainsString('InvalidReturnType', $result['STDOUT']);
         $this->assertStringContainsString('InvalidReturnStatement', $result['STDOUT']);
-        $this->assertStringContainsString('2 errors', $result['STDOUT']);
+        $this->assertStringContainsString('3 errors', $result['STDOUT']);
         $this->assertStringNotContainsString('E', $result['STDERR']);
 
-        $this->assertSame(1, $result['CODE']);
+        $this->assertSame(2, $result['CODE']);
 
         @unlink(self::$tmpDir . '/composer.lock');
     }
@@ -156,8 +159,9 @@ class PsalmEndToEndTest extends TestCase
         $result = $this->runPsalm(['--taint-analysis'], self::$tmpDir, true);
 
         $this->assertStringContainsString('TaintedHtml', $result['STDOUT']);
-        $this->assertStringContainsString('1 errors', $result['STDOUT']);
-        $this->assertSame(1, $result['CODE']);
+        $this->assertStringContainsString('TaintedTextWithQuotes', $result['STDOUT']);
+        $this->assertStringContainsString('2 errors', $result['STDOUT']);
+        $this->assertSame(2, $result['CODE']);
     }
 
     public function testTaintingWithoutInit(): void
@@ -165,8 +169,9 @@ class PsalmEndToEndTest extends TestCase
         $result = $this->runPsalm(['--taint-analysis'], self::$tmpDir, true, false);
 
         $this->assertStringContainsString('TaintedHtml', $result['STDOUT']);
-        $this->assertStringContainsString('1 errors', $result['STDOUT']);
-        $this->assertSame(1, $result['CODE']);
+        $this->assertStringContainsString('TaintedTextWithQuotes', $result['STDOUT']);
+        $this->assertStringContainsString('2 errors', $result['STDOUT']);
+        $this->assertSame(2, $result['CODE']);
     }
 
     public function testTaintGraphDumping(): void
@@ -181,7 +186,7 @@ class PsalmEndToEndTest extends TestCase
             true
         );
 
-        $this->assertSame(1, $result['CODE']);
+        $this->assertSame(2, $result['CODE']);
         $this->assertFileEquals(
             __DIR__ . '/../fixtures/expected_taint_graph.dot',
             self::$tmpDir.'/taints.dot'
@@ -200,7 +205,7 @@ class PsalmEndToEndTest extends TestCase
 
         $process = new Process(['php', $this->psalm, '--config=src/psalm.xml'], self::$tmpDir);
         $process->run();
-        $this->assertSame(1, $process->getExitCode());
+        $this->assertSame(2, $process->getExitCode());
         $this->assertStringContainsString('InvalidReturnType', $process->getOutput());
     }
 

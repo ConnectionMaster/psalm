@@ -2,11 +2,12 @@
 namespace Psalm\Internal\Analyzer\Statements\Expression\BinaryOp;
 
 use PhpParser;
-use Psalm\Internal\Analyzer\Statements\Expression\Assignment\ArrayAssignmentAnalyzer;
-use Psalm\Internal\Analyzer\StatementsAnalyzer;
 use Psalm\CodeLocation;
 use Psalm\Config;
 use Psalm\Context;
+use Psalm\Internal\Analyzer\Statements\Expression\Assignment\ArrayAssignmentAnalyzer;
+use Psalm\Internal\Analyzer\StatementsAnalyzer;
+use Psalm\Internal\Type\TypeCombiner;
 use Psalm\Issue\FalseOperand;
 use Psalm\Issue\InvalidOperand;
 use Psalm\Issue\MixedOperand;
@@ -18,25 +19,25 @@ use Psalm\Issue\StringIncrement;
 use Psalm\IssueBuffer;
 use Psalm\StatementsSource;
 use Psalm\Type;
-use Psalm\Type\Atomic\TKeyedArray;
 use Psalm\Type\Atomic\TArray;
 use Psalm\Type\Atomic\TFalse;
 use Psalm\Type\Atomic\TFloat;
+use Psalm\Type\Atomic\TInt;
+use Psalm\Type\Atomic\TKeyedArray;
 use Psalm\Type\Atomic\TList;
 use Psalm\Type\Atomic\TLiteralInt;
-use Psalm\Type\Atomic\TTemplateParam;
-use Psalm\Type\Atomic\TInt;
 use Psalm\Type\Atomic\TMixed;
 use Psalm\Type\Atomic\TNamedObject;
 use Psalm\Type\Atomic\TNull;
-use Psalm\Type\Atomic\TPositiveInt;
 use Psalm\Type\Atomic\TNumeric;
-use Psalm\Internal\Type\TypeCombiner;
+use Psalm\Type\Atomic\TPositiveInt;
+use Psalm\Type\Atomic\TTemplateParam;
+
 use function array_diff_key;
 use function array_values;
+use function is_int;
 use function preg_match;
 use function strtolower;
-use function is_int;
 
 /**
  * @internal
@@ -271,6 +272,18 @@ class NonDivArithmeticOpAnalyzer
     }
 
     /**
+     * @param int|float $result
+     */
+    private static function getNumericalType($result): Type\Union
+    {
+        if (is_int($result)) {
+            return Type::getInt(false, $result);
+        }
+
+        return Type::getFloat($result);
+    }
+
+    /**
      * @param  string[]        &$invalid_left_messages
      * @param  string[]        &$invalid_right_messages
      */
@@ -306,15 +319,19 @@ class NonDivArithmeticOpAnalyzer
             $calculated_type = null;
 
             if ($parent instanceof PhpParser\Node\Expr\BinaryOp\Plus) {
-                $calculated_type = Type::getInt(false, $left_type_part->value + $right_type_part->value);
+                $result = $left_type_part->value + $right_type_part->value;
+                $calculated_type = self::getNumericalType($result);
             } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\Minus) {
-                $calculated_type = Type::getInt(false, $left_type_part->value - $right_type_part->value);
+                $result = $left_type_part->value - $right_type_part->value;
+                $calculated_type = self::getNumericalType($result);
             } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\Mod) {
                 $calculated_type = Type::getInt(false, $left_type_part->value % $right_type_part->value);
             } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\Mul) {
-                $calculated_type = Type::getInt(false, $left_type_part->value * $right_type_part->value);
+                $result = $left_type_part->value * $right_type_part->value;
+                $calculated_type = self::getNumericalType($result);
             } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\Pow) {
-                $calculated_type = Type::getInt(false, $left_type_part->value ** $right_type_part->value);
+                $result = $left_type_part->value ** $right_type_part->value;
+                $calculated_type = self::getNumericalType($result);
             } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\BitwiseOr) {
                 $calculated_type = Type::getInt(false, $left_type_part->value | $right_type_part->value);
             } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\BitwiseAnd) {
@@ -326,12 +343,16 @@ class NonDivArithmeticOpAnalyzer
             } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\ShiftRight) {
                 $calculated_type = Type::getInt(false, $left_type_part->value >> $right_type_part->value);
             } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\Div) {
-                $value = $left_type_part->value / $right_type_part->value;
-
-                if (is_int($value)) {
-                    $calculated_type = Type::getInt(false, $value);
+                if ($right_type_part->value === 0) {
+                    $calculated_type = Type::getEmpty();
                 } else {
-                    $calculated_type = Type::getFloat($value);
+                    $value = $left_type_part->value / $right_type_part->value;
+
+                    if (is_int($value)) {
+                        $calculated_type = Type::getInt(false, $value);
+                    } else {
+                        $calculated_type = Type::getFloat($value);
+                    }
                 }
             }
 
@@ -369,9 +390,9 @@ class NonDivArithmeticOpAnalyzer
             $has_string_increment = true;
 
             if (!$result_type) {
-                $result_type = Type::getString();
+                $result_type = Type::getNonEmptyString();
             } else {
-                $result_type = Type::combineUnionTypes(Type::getString(), $result_type);
+                $result_type = Type::combineUnionTypes(Type::getNonEmptyString(), $result_type);
             }
 
             $has_valid_left_operand = true;
@@ -659,7 +680,15 @@ class NonDivArithmeticOpAnalyzer
                     if ($parent instanceof PhpParser\Node\Expr\BinaryOp\Minus) {
                         $always_positive = false;
                     } elseif ($left_is_positive && $right_is_positive) {
-                        $always_positive = true;
+                        if ($parent instanceof PhpParser\Node\Expr\BinaryOp\BitwiseXor
+                            || $parent instanceof PhpParser\Node\Expr\BinaryOp\BitwiseAnd
+                            || $parent instanceof PhpParser\Node\Expr\BinaryOp\ShiftLeft
+                            || $parent instanceof PhpParser\Node\Expr\BinaryOp\ShiftRight
+                        ) {
+                            $always_positive = false;
+                        } else {
+                            $always_positive = true;
+                        }
                     } elseif ($parent instanceof PhpParser\Node\Expr\BinaryOp\Plus
                         && ($left_type_part instanceof TLiteralInt && $left_type_part->value === 0)
                         && $right_is_positive

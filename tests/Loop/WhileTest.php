@@ -623,11 +623,96 @@ class WhileTest extends \Psalm\Tests\TestCase
                         return $state;
                     }'
             ],
+            'continueShouldAddToContext' => [
+                '<?php
+                    function foo() : void {
+                        $link = null;
+
+                        while (rand(0, 1)) {
+                            if (rand(0, 1)) {
+                                $link = "a";
+                                continue;
+                            }
+
+                            if (rand(0, 1)) {
+                                if ($link === null) {
+                                   return;
+                                }
+
+                                continue;
+                            }
+                        }
+                    }'
+            ],
+            'continue2Returns' => [
+                '<?php
+                    function foo(): array {
+                        while (rand(0, 1)) {
+                            while (rand(0, 1)) {
+                                if (rand(0, 1)) {
+                                    continue 2;
+                                }
+
+                                return [];
+                            }
+                        }
+
+                        return [];
+                    }'
+            ],
+            'propertyTypeUpdatedInBranch' => [
+                '<?php
+                    class A
+                    {
+                        public ?int $foo = null;
+
+                        public function setFoo(): void
+                        {
+                            $this->foo = 5;
+                        }
+                    }
+
+                    function bar(A $a): void {
+                        $a->foo = null;
+
+                        while (rand(0, 1)) {
+                            if (rand(0, 1)) {
+                                $a->setFoo();
+                            } elseif ($a->foo !== null) {}
+                        }
+                    }'
+            ],
+            'propertyTypeUpdatedInBranchWithBreak' => [
+                '<?php
+                    class A
+                    {
+                        public ?int $foo = null;
+
+                        public function setFoo(): void
+                        {
+                            $this->foo = 5;
+                        }
+                    }
+
+                    function bar(A $a): void {
+                        $a->foo = null;
+
+                        while (rand(0, 1)) {
+                            if (rand(0, 1)) {
+                                $a->setFoo();
+                            } elseif ($a->foo !== null) {
+                                break;
+                            }
+                        }
+
+                        if ($a->foo !== null) {}
+                    }'
+            ],
         ];
     }
 
     /**
-     * @return iterable<string,array{string,error_message:string,2?:string[],3?:bool,4?:string}>
+     * @return iterable<string,array{string,error_message:string,1?:string[],2?:bool,3?:string}>
      */
     public function providerInvalidCodeParse(): iterable
     {
